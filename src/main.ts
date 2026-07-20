@@ -1,5 +1,5 @@
 import './style.css'
-import { bytesToHex } from './dvrf/group.ts'
+import { bytesToHex, utf8ToBytes } from './dvrf/group.ts'
 import {
   type CheatMode,
   type KeyCeremony,
@@ -12,24 +12,45 @@ import {
   runEvaluation,
   verify,
 } from './dvrf/protocol.ts'
-import { utf8ToBytes } from './dvrf/group.ts'
+import { EnvelopeError, PROOF_BYTES, serializeEnvelope, verifyEnvelope } from './dvrf/envelope.ts'
 import { escapeHtml, pointHex, scalarHex, short } from './ui/format.ts'
 
 // ---------------------------------------------------------------------------
 // State
+//
+// The page renders only from immutable snapshots: an evaluation captures the
+// ceremony, message, roster, cheat cast, and the exact nonce batch it consumed
+// (`Transcript`), and upstream controls are locked while a walk is revealing
+// one. A spent batch stays on screen — historical evidence is never replaced
+// in place.
+
+interface Batch {
+  id: number
+  nonces: Map<number, NoncePair>
+}
+
+interface SpentBatch extends Batch {
+  message: string
+  responders: number[]
+}
 
 interface AppState {
   ceremony?: KeyCeremony
-  nonces: Map<number, NoncePair>
-  batchNo: number
-  /** Last successful honest evaluation (feeds Exhibits 4 and 5). */
+  ceremonyParams?: { n: number; t: number }
+  queued?: Batch
+  spent?: SpentBatch
+  nextBatchId: number
+  /** Last successful evaluation (feeds Exhibits 4 and 5). */
   lastOk?: Transcript
   steps: string[]
   ladderRungs: string[][]
   stepIndex: number
 }
 
-const state: AppState = { nonces: new Map(), batchNo: 0, steps: [], ladderRungs: [], stepIndex: 0 }
+const state: AppState = { nextBatchId: 1, steps: [], ladderRungs: [], stepIndex: 0 }
+
+/** The transcript currently being revealed step by step, if any. */
+let current: Transcript | undefined
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T
 
@@ -45,6 +66,8 @@ const verifyBtn = $<HTMLButtonElement>('verify-btn')
 const subsetBtn = $<HTMLButtonElement>('subset-btn')
 const breakBtn = $<HTMLButtonElement>('break-btn')
 const honestRerunBtn = $<HTMLButtonElement>('honest-rerun-btn')
+const wbVerifyBtn = $<HTMLButtonElement>('wb-verify-btn')
+const wbInput = $<HTMLTextAreaElement>('wb-input')
 
 // ---------------------------------------------------------------------------
 // Small render helpers
@@ -75,6 +98,29 @@ function partyCards(ceremony: KeyCeremony, extras?: (i: number) => string, blame
 }
 
 // ---------------------------------------------------------------------------
+// Walk locking — while a transcript is being revealed, nothing upstream of it
+// may change, so no visible control can contradict the transcript on screen.
+
+function setLocked(locked: boolean): void {
+  const haveCeremony = state.ceremony !== undefined
+  const haveBatch = state.queued !== undefined
+  nInput.disabled = locked
+  tInput.disabled = locked
+  setupBtn.disabled = locked
+  preBtn.disabled = locked || !haveCeremony
+  msgInput.disabled = locked
+  runAllBtn.disabled = !haveBatch
+  stepBtn.disabled = !haveBatch
+  resetEvalBtn.disabled = !haveBatch && !locked
+  breakBtn.disabled = locked || !haveBatch
+  honestRerunBtn.disabled = locked || !haveBatch || honestRerunBtn.dataset.armed !== 'yes'
+  document
+    .querySelectorAll<HTMLInputElement>('input[name="roster"]')
+    .forEach((el) => (el.disabled = locked))
+  syncCheatControls(locked)
+}
+
+// ---------------------------------------------------------------------------
 // Exhibit 1 — key ceremony
 
 function syncThresholdRange(): void {
@@ -83,27 +129,33 @@ function syncThresholdRange(): void {
   if (Number(tInput.value) > n) tInput.value = String(n)
   $('n-value').textContent = nInput.value
   $('t-value').textContent = tInput.value
+  const p = state.ceremonyParams
+  const stale = p !== undefined && (p.n !== Number(nInput.value) || p.t !== Number(tInput.value))
+  $('setup-stale').innerHTML = stale
+    ? chip('warn', '⚠', `showing a ${p!.t}-of-${p!.n} ceremony — run the ceremony again to apply ${tInput.value}-of-${nInput.value}`)
+    : ''
 }
 
 function runSetup(): void {
   const n = Number(nInput.value)
   const t = Number(tInput.value)
+  // A new ceremony atomically invalidates every descendant: the in-progress
+  // walk, batches, outputs, comparisons, and attack results.
+  current = undefined
   state.ceremony = dealerKeygen(n, t)
-  state.nonces = new Map()
-  state.batchNo = 0
+  state.ceremonyParams = { n, t }
+  state.queued = undefined
+  state.spent = undefined
+  state.nextBatchId = 1
   state.lastOk = undefined
   resetEvaluation()
   $('pre-out').innerHTML = ''
   $('verify-out').innerHTML = ''
   $('break-out').innerHTML = ''
-  preBtn.disabled = false
-  stepBtn.disabled = true
-  runAllBtn.disabled = true
-  resetEvalBtn.disabled = true
+  $('export-out').innerHTML = ''
   verifyBtn.disabled = true
   subsetBtn.disabled = true
-  breakBtn.disabled = true
-  honestRerunBtn.disabled = true
+  honestRerunBtn.dataset.armed = 'no'
 
   $('setup-out').innerHTML = `
     <p>Dealt a ${t}-of-${n} sharing. Any ${t} parties can evaluate; ${t - 1} learn nothing.</p>
@@ -113,6 +165,8 @@ function runSetup(): void {
 
   renderRoster()
   renderCheatControls()
+  syncThresholdRange()
+  setLocked(false)
 }
 
 function renderRoster(): void {
@@ -126,6 +180,9 @@ function renderRoster(): void {
       } /> Party ${p.index}</label>`,
     )
     .join('')
+  document
+    .querySelectorAll<HTMLInputElement>('input[name="roster"]')
+    .forEach((el) => el.addEventListener('change', () => syncCheatControls(false)))
 }
 
 function selectedRoster(): number[] {
@@ -135,28 +192,58 @@ function selectedRoster(): number[] {
 }
 
 // ---------------------------------------------------------------------------
-// Exhibit 2 — offline preprocessing
+// Exhibit 2 — offline preprocessing with a visible queued → spent lifecycle
 
-function publishBatch(announce: boolean): void {
+function publishBatch(): void {
   const { ceremony } = state
   if (!ceremony) return
-  state.batchNo += 1
-  state.nonces = new Map(ceremony.parties.map((p) => [p.index, preprocess(p)]))
-  const cards = partyCards(ceremony, (i) => {
-    const np = state.nonces.get(i)!
+  const id = state.nextBatchId++
+  state.queued = {
+    id,
+    nonces: new Map(ceremony.parties.map((p) => [p.index, preprocess(p, undefined, id)])),
+  }
+  renderPreOut()
+  setLocked(false)
+}
+
+function batchCards(ceremony: KeyCeremony, batch: Batch, spentBy?: number[]): string {
+  return partyCards(ceremony, (i) => {
+    const np = batch.nonces.get(i)!
+    const status =
+      spentBy === undefined
+        ? chip('ok', '⏳', 'queued')
+        : spentBy.includes(i)
+          ? chip('warn', '✔', 'spent')
+          : chip('ok', '⏳', 'still queued')
     return `<p class="kv"><b>D<sub>${i}</sub></b> ${short(pointHex(np.D))}</p>
-            <p class="kv"><b>E<sub>${i}</sub></b> ${short(pointHex(np.E))}</p>`
+            <p class="kv"><b>E<sub>${i}</sub></b> ${short(pointHex(np.E))}</p>
+            <p class="kv">${status}</p>`
   })
-  $('pre-out').innerHTML = `
-    <p>Batch #${state.batchNo} published — one nonce pair per party, ${
-      announce ? 'before any message exists. ' : ''
-    }${chip('warn', '⏱', 'one-time use')} Each pair is spent by its first evaluation; a fresh batch is
-    published automatically afterwards, exactly as a FROST deployment queues nonces in advance.</p>
-    ${cards}`
-  stepBtn.disabled = false
-  runAllBtn.disabled = false
-  resetEvalBtn.disabled = false
-  breakBtn.disabled = false
+}
+
+function renderPreOut(): void {
+  const { ceremony, queued, spent } = state
+  if (!ceremony) return
+  let html = ''
+  if (spent) {
+    html += `
+      <h3>Batch #${spent.id} — consumed by the evaluation of “${escapeHtml(spent.message)}”</h3>
+      <p>These are the exact commitments that evaluation's binding factors and proof trace back to —
+      they stay on screen as evidence. ${chip('warn', '⏱', 'one-time')} A spent slot can never be
+      reused; the code hard-refuses a second spend.</p>
+      ${batchCards(ceremony, spent, spent.responders)}`
+  }
+  if (queued) {
+    html += `
+      <h3>Batch #${queued.id} — queued for the next evaluation</h3>
+      <p>Published before that evaluation's message exists${
+        spent ? ' (it will serve a future request, not the one above)' : ''
+      } — this is the round that naive protocols must run per evaluation, online.</p>
+      ${batchCards(ceremony, queued)}`
+  } else if (!spent) {
+    html = ''
+  }
+  $('pre-out').innerHTML = html
 }
 
 // ---------------------------------------------------------------------------
@@ -172,12 +259,14 @@ function setLadder(now: string[], done: string[]): void {
 }
 
 function resetEvaluation(): void {
+  current = undefined
   state.steps = []
   state.ladderRungs = []
   state.stepIndex = 0
   $('eval-steps').innerHTML = ''
   $('eval-out').innerHTML = ''
   setLadder([], [])
+  setLocked(false)
 }
 
 function buildSteps(tr: Transcript): void {
@@ -191,7 +280,8 @@ function buildSteps(tr: Transcript): void {
   push(
     `<h4><span class="phase-tag">input</span> Hash the message onto the curve</h4>
      <p>Everyone maps the message to the same point <code>P = HashToGroup(m)</code>. All partials will be
-     multiples of this exact point.</p>
+     multiples of this exact point. This walk consumed nonce batch #${tr.batch} — its commitments stay
+     visible in Exhibit 2.</p>
      <div class="msg-chips">${msgChip('m', `"${escapeHtml(tr.message)}"`)}${msgChip('P', short(pointHex(tr.input), 16, 8))}</div>`,
     [],
   )
@@ -208,7 +298,7 @@ function buildSteps(tr: Transcript): void {
     push(
       `<h4><span class="phase-tag">online round 1</span> Broadcast partials and input-base nonces</h4>
        <p>Each participant i derives its binding factor ρ<sub>i</sub> (hash of the message, the roster, and
-       every preprocessed commitment), forms its one-time nonce k<sub>i</sub> = d<sub>i</sub> +
+       every batch-#${tr.batch} commitment), forms its one-time nonce k<sub>i</sub> = d<sub>i</sub> +
        ρ<sub>i</sub>·e<sub>i</sub>, and broadcasts its partial Γ<sub>i</sub> = x<sub>i</sub>·P together with
        R<sub>i</sub><sup>P</sup> = k<sub>i</sub>·P.</p>
        <div class="msg-chips">${tr.partials
@@ -220,7 +310,7 @@ function buildSteps(tr: Transcript): void {
       `<h4><span class="phase-tag">derived locally</span> One shared challenge for the whole set</h4>
        <p>Anyone can now combine the broadcasts with Lagrange weights λ<sub>i</sub> — and the key-base
        commitments R<sub>i</sub><sup>B</sup> = D<sub>i</sub> + ρ<sub>i</sub>·E<sub>i</sub> come straight
-       from the <em>offline</em> batch. One Fiat–Shamir challenge c covers every party, which is what lets
+       from offline batch #${tr.batch}. One Fiat–Shamir challenge c covers every party, which is what lets
        t transcripts fold into one constant-size proof.</p>
        <div class="msg-chips">
          ${tr.partials.map((p) => msgChip(`λ${p.index}`, short(scalarHex(p.lambda), 8, 4))).join('')}
@@ -232,7 +322,7 @@ function buildSteps(tr: Transcript): void {
     push(
       `<h4><span class="phase-tag">online round 2</span> Broadcast responses</h4>
        <p>Each participant answers the shared challenge with z<sub>i</sub> = k<sub>i</sub> +
-       c·x<sub>i</sub>. Two rounds total — the commit round happened yesterday, offline.</p>
+       c·x<sub>i</sub>. Two rounds total — the commit round happened in the offline batch.</p>
        <div class="msg-chips">${tr.partials
          .map((p) => msgChip(`z${p.index}`, short(scalarHex(p.z), 10, 5)))
          .join('')}</div>`,
@@ -260,8 +350,8 @@ function buildSteps(tr: Transcript): void {
       push(
         `<h4><span class="phase-tag">aggregate</span> Checks pass — fold t transcripts into one proof</h4>
          <p>All partials verify: ${checksHtml}</p>
-         <p>Lagrange-weighted sums produce the single proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) and the
-         output β = H(Γ). The proof is the same size for any t.</p>`,
+         <p>Lagrange-weighted sums produce the single proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) —
+         ${PROOF_BYTES} bytes, the same size for any t — and the output β = H(Γ).</p>`,
         ['icy-2'],
       )
     }
@@ -272,27 +362,41 @@ function buildSteps(tr: Transcript): void {
   state.stepIndex = 0
 }
 
+/** Consume the queued batch for an evaluation and queue the next one. */
+function consumeBatch(message: string, responders: number[]): Batch {
+  const consumed = state.queued!
+  state.spent = { ...consumed, message, responders }
+  state.queued = undefined
+  publishBatch()
+  return consumed
+}
+
 function startEvaluation(): Transcript | undefined {
-  const { ceremony } = state
-  if (!ceremony) return undefined
-  if (state.nonces.size === 0) publishBatch(false)
+  const { ceremony, queued } = state
+  if (!ceremony || !queued) return undefined
   const roster = selectedRoster()
   if (roster.length === 0) {
-    $('eval-out').innerHTML = verdict('warn', '⚠ Pick at least one participant', '<p>Select parties above, then step the protocol.</p>')
+    $('eval-out').innerHTML = verdict(
+      'warn',
+      '⚠ Pick at least one participant',
+      '<p>Select parties above, then step the protocol.</p>',
+    )
     return undefined
   }
-  const tr = runEvaluation(ceremony, state.nonces, msgInput.value, roster)
-  publishBatch(false) // nonces are one-time: queue the next batch, like a FROST deployment
+  const tr = runEvaluation(ceremony, queued.nonces, msgInput.value, roster)
+  consumeBatch(tr.message, tr.responders)
   buildSteps(tr)
   return tr
 }
-
-let current: Transcript | undefined
 
 function revealStep(): void {
   if (!current) {
     current = startEvaluation()
     if (!current) return
+    setLocked(true)
+    stepBtn.disabled = false
+    runAllBtn.disabled = false
+    resetEvalBtn.disabled = false
     $('eval-steps').innerHTML = ''
     $('eval-out').innerHTML = ''
     setLadder([], [])
@@ -313,18 +417,20 @@ function revealStep(): void {
 
 function finishEvaluation(): void {
   if (!current) return
-  setLadder([], LADDER_DONE_AT_END)
+  setLadder([], current.status === 'refused-below-threshold' ? [] : LADDER_DONE_AT_END)
   if (current.status === 'ok') {
     state.lastOk = current
     verifyBtn.disabled = false
     subsetBtn.disabled = false
-    honestRerunBtn.disabled = false
+    honestRerunBtn.dataset.armed = 'yes'
+    renderExport(current)
     $('eval-out').innerHTML = `
       <div class="beta-box">
         <h4>β — the group's verifiable random output</h4>
         <p class="beta-hex">${betaHex(current.beta!)}</p>
       </div>
-      <p>Proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) — constant size, take it to Exhibit 4:</p>
+      <p>Proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) — ${PROOF_BYTES} bytes, constant in t. Take it to
+      Exhibit 4, or export it below and verify it anywhere:</p>
       <div class="msg-chips">
         ${msgChip('Γ', short(pointHex(current.proof!.gamma), 16, 8))}
         ${msgChip('R_B', short(pointHex(current.proof!.rB), 16, 8))}
@@ -340,20 +446,31 @@ function finishEvaluation(): void {
     )
   }
   current = undefined
+  setLocked(false)
 }
 
 function runAllSteps(): void {
-  if (!current && state.stepIndex >= state.steps.length) {
+  if (!current && state.stepIndex >= state.steps.length && state.steps.length > 0) {
     resetEvaluation()
   }
-  const total = () => state.steps.length
   do {
     revealStep()
-  } while (current && state.stepIndex < total())
+  } while (current && state.stepIndex < state.steps.length)
 }
 
 // ---------------------------------------------------------------------------
-// Exhibit 4 — public verification, compute both sides
+// Exhibit 4 — public verification, compute both sides, export + workbench
+
+function renderExport(tr: Transcript): void {
+  const { ceremony } = state
+  if (!ceremony || !tr.beta || !tr.proof) return
+  const envelope = serializeEnvelope(ceremony.groupPk, tr.message, tr.beta, tr.proof)
+  $('export-out').innerHTML = `
+    <p>Everything a stranger needs — construction ID, group key, message, β, and the ${PROOF_BYTES}-byte
+    proof. Copy it into the workbench below, another tab, or another machine:</p>
+    <textarea class="envelope-box" id="export-box" readonly rows="9"
+      aria-label="Exported proof envelope (canonical JSON)">${escapeHtml(envelope)}</textarea>`
+}
 
 function runVerify(): void {
   const { ceremony, lastOk } = state
@@ -372,7 +489,8 @@ function runVerify(): void {
       `${eq(res.keyEquation, 'key equation', 'z·B = R_B + c·PK')}
        ${eq(res.inputEquation, 'input equation', 'z·P = R_P + c·Γ')}
        ${eq(res.betaMatches, 'output binding', 'β = H(Γ)')}
-       <p>Checked with nothing but the group public key, the message, β, and the four-value proof.</p>`,
+       <p>Checked with nothing but the group public key, the message, β, and the ${PROOF_BYTES}-byte
+       proof.</p>`,
     )}
     <h3>Compute both sides — threshold vs. the dealer's direct evaluation</h3>
     <table class="compare-table">
@@ -386,8 +504,8 @@ function runVerify(): void {
 }
 
 function runSubsetCompare(): void {
-  const { ceremony, lastOk } = state
-  if (!ceremony || !lastOk?.beta) return
+  const { ceremony, lastOk, queued } = state
+  if (!ceremony || !lastOk?.beta || !queued) return
   const prev = new Set(lastOk.responders)
   const others = ceremony.parties.map((p) => p.index).filter((i) => !prev.has(i))
   if (others.length === 0) {
@@ -400,23 +518,53 @@ function runSubsetCompare(): void {
     return
   }
   const roster = [...others, ...lastOk.responders].slice(0, ceremony.t)
-  if (state.nonces.size === 0) publishBatch(false)
-  const tr = runEvaluation(ceremony, state.nonces, lastOk.message, roster)
-  publishBatch(false)
+  const tr = runEvaluation(ceremony, queued.nonces, lastOk.message, roster)
+  consumeBatch(tr.message, tr.responders)
   if (tr.status !== 'ok') return
   const same = betaHex(tr.beta!) === betaHex(lastOk.beta)
   $('verify-out').innerHTML = `
     ${verdict(
       same ? 'ok' : 'bad',
       same ? '✔ Different parties, identical output' : '✘ Outputs differ — this should never happen',
-      `<p>A VRF output is a deterministic function of the group key and the message — <em>which</em>
-       t parties show up cannot steer it. That is why "wait for a better committee" is not an attack.</p>`,
+      `<p>For a <em>fixed group key and fixed message</em>, β is fully determined — <em>which</em>
+       t parties show up cannot steer it. (What a coalition can still do is refuse to finish, so a real
+       beacon must keep the message fixed on retry — see Exhibit 5.)</p>`,
     )}
     <table class="compare-table">
       <tr><th scope="row">β from parties ${lastOk.responders.join(', ')}</th><td class="mono">${betaHex(lastOk.beta)}</td></tr>
       <tr><th scope="row">β from parties ${tr.responders.join(', ')}</th><td class="mono">${betaHex(tr.beta!)}</td></tr>
       <tr><th scope="row">Byte-for-byte</th><td>${same ? chip('ok', '✔', 'identical') : chip('bad', '✘', 'MISMATCH')}</td></tr>
     </table>`
+}
+
+function runWorkbench(): void {
+  const text = wbInput.value.trim()
+  if (text === '') {
+    $('wb-out').innerHTML = verdict('warn', '⚠ Nothing to verify', '<p>Paste a proof envelope first.</p>')
+    return
+  }
+  try {
+    const { parsed, result } = verifyEnvelope(text)
+    const eq = (okFlag: boolean, label: string): string =>
+      okFlag ? chip('ok', '✔', label) : chip('bad', '✘', `${label} FAILS`)
+    $('wb-out').innerHTML = verdict(
+      result.valid ? 'ok' : 'bad',
+      result.valid ? '✔ Envelope verifies' : '✘ Envelope is well-formed but does NOT verify',
+      `<p>${eq(result.keyEquation, 'key equation')} ${eq(result.inputEquation, 'input equation')}
+       ${eq(result.betaMatches, 'β = H(Γ)')}</p>
+       <p class="eq-row">message: <code>${escapeHtml(JSON.stringify(parsed.message))}</code></p>
+       <p class="eq-row">group key: <code>${pointHex(parsed.groupPk)}</code></p>
+       <p>This check used only the envelope's contents — no state from the exhibits above.</p>`,
+    )
+  } catch (e) {
+    const msg = e instanceof EnvelopeError ? e.message : 'unrecognized parser failure'
+    $('wb-out').innerHTML = verdict(
+      'bad',
+      '✘ Rejected before verification',
+      `<p>Strict parsing failed — <code>${escapeHtml(msg)}</code>. Malformed data never reaches the
+       curve math (fail closed).</p>`,
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +574,7 @@ const CHEAT_OPTIONS: Array<[CheatMode | 'honest', string]> = [
   ['honest', 'honest'],
   ['corrupt-gamma', 'corrupt partial Γᵢ'],
   ['grind-nonce', 'swap nonce after seeing m'],
+  ['withhold-response', 'withhold round 2 (selective abort)'],
   ['absent', 'absent (no response)'],
 ]
 
@@ -443,34 +592,57 @@ function renderCheatControls(): void {
       </span>`,
     )
     .join('')
+  syncCheatControls(false)
 }
 
+/** Cheat selectors only exist for parties actually in the roster. */
+function syncCheatControls(locked: boolean): void {
+  const roster = new Set(selectedRoster())
+  document.querySelectorAll<HTMLSelectElement>('#cheat-controls select').forEach((sel) => {
+    const idx = Number(sel.dataset.index)
+    const participating = roster.has(idx)
+    sel.disabled = locked || !participating
+    if (!participating) sel.value = 'honest'
+    sel.setAttribute(
+      'aria-label',
+      participating ? `Behavior of party ${idx}` : `Behavior of party ${idx} (not in the selected roster)`,
+    )
+  })
+}
+
+/** Effective cast: only cheats by parties that are actually participating. */
 function selectedCheats(): Map<number, CheatMode> {
+  const roster = new Set(selectedRoster())
   const cheats = new Map<number, CheatMode>()
   document.querySelectorAll<HTMLSelectElement>('#cheat-controls select').forEach((sel) => {
-    if (sel.value !== 'honest') cheats.set(Number(sel.dataset.index), sel.value as CheatMode)
+    const idx = Number(sel.dataset.index)
+    if (roster.has(idx) && sel.value !== 'honest') cheats.set(idx, sel.value as CheatMode)
   })
   return cheats
 }
 
 function runBreak(): void {
-  const { ceremony } = state
-  if (!ceremony) return
-  if (state.nonces.size === 0) publishBatch(false)
+  const { ceremony, queued } = state
+  if (!ceremony || !queued) return
   const cheats = selectedCheats()
   const roster = selectedRoster()
   if (roster.length === 0) {
-    $('break-out').innerHTML = verdict('warn', '⚠ Pick participants in Exhibit 3', '<p>The cast runs against the roster selected above.</p>')
+    $('break-out').innerHTML = verdict(
+      'warn',
+      '⚠ Pick participants in Exhibit 3',
+      '<p>The cast runs against the roster selected above.</p>',
+    )
     return
   }
-  const tr = runEvaluation(ceremony, state.nonces, msgInput.value, roster, { cheats })
-  publishBatch(false)
+  const tr = runEvaluation(ceremony, queued.nonces, msgInput.value, roster, { cheats })
+  consumeBatch(tr.message, tr.responders)
+  honestRerunBtn.dataset.armed = 'yes'
   honestRerunBtn.disabled = false
 
   const cheatSummary =
     cheats.size === 0
-      ? '<p>Everyone played honest — so this is just a normal evaluation.</p>'
-      : `<p>Cast: ${[...cheats.entries()]
+      ? '<p>Every participant played honest — so this is just a normal evaluation.</p>'
+      : `<p>Effective cast (participants only): ${[...cheats.entries()]
           .map(([i, mode]) => `party ${i} → <em>${CHEAT_OPTIONS.find(([v]) => v === mode)?.[1]}</em>`)
           .join('; ')}.</p>`
 
@@ -481,6 +653,23 @@ function runBreak(): void {
       `<p>${tr.absent.length} part${tr.absent.length === 1 ? 'y' : 'ies'} went silent and only
        ${tr.responders.length} of t = ${ceremony.t} remained. No output, no guess, no "best effort" —
        the protocol would rather say nothing than say something unverifiable.</p>`,
+    )}`
+    return
+  }
+
+  if (tr.status === 'aborted-withheld') {
+    $('break-out').innerHTML = `${cheatSummary}${verdict(
+      'warn',
+      '⚠ Selective abort — output learned, publication censored',
+      `<p>Part${tr.withheld.length === 1 ? 'y' : 'ies'} ${tr.withheld.join(', ')} broadcast round 1,
+       watched everyone else's partials arrive, computed the eventual output — and then refused round 2,
+       so the proof cannot be completed with this participant set.</p>
+       <div class="beta-box"><h4>The β the withholder already knew</h4>
+       <p class="beta-hex">${betaHex(tr.learnedBeta!)}</p></div>
+       <p>This is the honest limit of "no bias": for a fixed key and message no <em>other</em> β can ever
+       be produced, but a coalition can still censor publication. A real beacon must therefore keep the
+       message fixed on retry and replace the withholder — never roll a fresh candidate output. Press
+       “Rerun with honest parties” and compare byte-for-byte.</p>`,
     )}`
     return
   }
@@ -498,11 +687,12 @@ function runBreak(): void {
       'bad',
       '✘ Cheating detected — evaluation aborted, cheater named',
       `<p>The two DLEQ equations point straight at the manipulation: a corrupted partial breaks the
-       <em>input</em> equation, and a swapped nonce breaks the <em>key</em> equation because the
-       preprocessed commitment (D, E) had already pinned the nonce before the message existed.</p>
+       <em>input</em> equation, and a substituted nonce breaks the <em>key</em> equation — a party can
+       still <em>try</em> a post-message nonce swap, but no substitution can pass verification against
+       the (D, E) slot it committed to before the message existed.</p>
        <table class="compare-table"><tr><th scope="col">Party</th><th scope="col">DLEQ checks</th><th scope="col">Verdict</th></tr>${rows}</table>
        <p>No output was produced. Rerun with honest parties to see that the cheater delayed the beacon
-       but could not bend it.</p>`,
+       but could not bend it (same message, same β).</p>`,
     )}${partyCards(ceremony, undefined, tr.blamed)}`
     return
   }
@@ -513,17 +703,21 @@ function runBreak(): void {
     `<p>${
       tr.absent.length > 0
         ? `${tr.absent.length} part${tr.absent.length === 1 ? 'y was' : 'ies were'} absent, but ${tr.responders.length} ≥ t responded — availability is exactly what the threshold buys.`
-        : 'All selected parties responded honestly.'
+        : 'All participants responded honestly.'
     }</p>
      <div class="beta-box"><h4>β</h4><p class="beta-hex">${betaHex(tr.beta!)}</p></div>`,
   )}`
-  if (!state.lastOk) state.lastOk = tr
+  if (!state.lastOk) {
+    state.lastOk = tr
+    verifyBtn.disabled = false
+    subsetBtn.disabled = false
+    renderExport(tr)
+  }
 }
 
 function runHonestRerun(): void {
-  const { ceremony, lastOk } = state
-  if (!ceremony) return
-  if (state.nonces.size === 0) publishBatch(false)
+  const { ceremony, lastOk, queued } = state
+  if (!ceremony || !queued) return
   const cheats = selectedCheats()
   const honest = ceremony.parties.map((p) => p.index).filter((i) => !cheats.has(i))
   const roster = honest.slice(0, ceremony.t)
@@ -536,27 +730,28 @@ function runHonestRerun(): void {
     )
     return
   }
-  const tr = runEvaluation(ceremony, state.nonces, msgInput.value, roster)
-  publishBatch(false)
+  const tr = runEvaluation(ceremony, queued.nonces, msgInput.value, roster)
+  consumeBatch(tr.message, tr.responders)
   if (tr.status !== 'ok') return
   const reference = lastOk && lastOk.message === tr.message ? betaHex(lastOk.beta!) : undefined
   const same = reference !== undefined && reference === betaHex(tr.beta!)
   $('break-out').innerHTML = verdict(
     'ok',
-    '✔ Honest majority delivers',
+    '✔ Honest threshold delivers',
     `<p>Parties ${tr.responders.join(', ')} produced${
       reference !== undefined
         ? same
-          ? ' <strong>the identical β</strong> the honest run produced earlier — cheating delayed the beacon, it never steered it.'
+          ? ' <strong>the identical β</strong> the earlier successful run produced — cheating delayed the beacon, it never steered it.'
           : ' a β for this message.'
         : ' a verifiable β.'
     }</p>
      <div class="beta-box"><h4>β</h4><p class="beta-hex">${betaHex(tr.beta!)}</p></div>
-     ${reference !== undefined ? `<p>Earlier honest run: ${same ? chip('ok', '✔', 'byte-for-byte identical') : chip('warn', '⚠', 'different message')}</p>` : ''}`,
+     ${reference !== undefined ? `<p>Earlier successful run: ${same ? chip('ok', '✔', 'byte-for-byte identical') : chip('warn', '⚠', 'different message')}</p>` : ''}`,
   )
   state.lastOk = tr
   verifyBtn.disabled = false
   subsetBtn.disabled = false
+  renderExport(tr)
 }
 
 // ---------------------------------------------------------------------------
@@ -565,16 +760,15 @@ function runHonestRerun(): void {
 nInput.addEventListener('input', syncThresholdRange)
 tInput.addEventListener('input', syncThresholdRange)
 setupBtn.addEventListener('click', runSetup)
-preBtn.addEventListener('click', () => publishBatch(true))
+preBtn.addEventListener('click', publishBatch)
 stepBtn.addEventListener('click', revealStep)
 runAllBtn.addEventListener('click', runAllSteps)
-resetEvalBtn.addEventListener('click', () => {
-  current = undefined
-  resetEvaluation()
-})
+resetEvalBtn.addEventListener('click', resetEvaluation)
 verifyBtn.addEventListener('click', runVerify)
 subsetBtn.addEventListener('click', runSubsetCompare)
 breakBtn.addEventListener('click', runBreak)
 honestRerunBtn.addEventListener('click', runHonestRerun)
+wbVerifyBtn.addEventListener('click', runWorkbench)
 
+honestRerunBtn.dataset.armed = 'no'
 syncThresholdRange()

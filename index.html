@@ -158,9 +158,9 @@
           <h1 class="cl-hero-title">Icy DVRF</h1>
           <p class="cl-hero-sub">Distributed VRF · FROST · eprint 2026/969</p>
           <p class="cl-hero-desc">
-            Runs a real t-of-n verifiable random function over ristretto255 — you deal shares, publish
-            FROST-style nonce commitments offline, then step the two online rounds that fold into one
-            constant-size, publicly checkable random output.
+            Runs an Icy-DVRF-inspired t-of-n verifiable random function over ristretto255, live — you
+            deal shares, publish FROST-style nonce commitments offline, then step the two online rounds
+            that fold into one constant-size, publicly checkable random output.
           </p>
         </div>
         <aside class="cl-hero-why" aria-label="Why it matters">
@@ -231,6 +231,7 @@
             <input type="range" id="t-input" min="2" max="5" value="3" />
             <output id="t-value" for="t-input">3</output>
             <button type="button" id="setup-btn">Run key ceremony</button>
+            <span id="setup-stale" role="status" aria-live="polite"></span>
           </div>
           <div id="setup-out" class="result" role="status" aria-live="polite"></div>
         </section>
@@ -250,11 +251,14 @@
         </section>
 
         <section class="panel" aria-labelledby="eval-h">
-          <h2 id="eval-h"><span class="exhibit-no">Exhibit 3</span> Two online rounds — step the real protocol</h2>
+          <h2 id="eval-h"><span class="exhibit-no">Exhibit 3</span> Two online rounds — step the protocol</h2>
           <p>
-            Pick a message and a set of participants, then step through the evaluation. Watch the round
-            ladder: because the commit round already happened offline, the online phase is just
-            <em>broadcast partials</em> → <em>respond to one shared challenge</em>.
+            Pick a message and a set of participants, then step through the evaluation — every value you
+            see is computed live by this page's instantiation (mapped step-by-step in the construction
+            map linked in the honesty card below). Watch the round ladder: because the commit round already happened
+            offline, the online phase is just <em>broadcast partials</em> → <em>respond to one shared
+            challenge</em>. While a walk is on screen, the controls above it lock — nothing you see can
+            contradict the transcript being explained.
           </p>
           <div class="controls">
             <label for="msg-input">Message</label>
@@ -272,8 +276,9 @@
             <aside class="ladder" aria-labelledby="ladder-h">
               <h3 id="ladder-h">The round ladder — where the “aha” lives</h3>
               <p class="ladder-note">
-                Online round-trips per evaluation, for three ways to build a DVRF. Fewer rungs = lower
-                latency when randomness is requested.
+                Online broadcast rounds per evaluation, for three ways to build a DVRF, counted under a
+                synchronous broadcast model (comparison basis and sources: the construction map in the
+                honesty card). Fewer rungs = lower latency when randomness is requested.
               </p>
               <div class="ladder-cols">
                 <div class="ladder-col" id="ladder-glow">
@@ -310,27 +315,53 @@
         <section class="panel" aria-labelledby="verify-h">
           <h2 id="verify-h"><span class="exhibit-no">Exhibit 4</span> Anyone can check it — and the proof never grows</h2>
           <p>
-            The aggregated proof is four values — <code>(Γ, R<sub>B</sub>, R<sub>P</sub>, z)</code> —
-            whether 3 parties contributed or 300. Verification needs only the group public key: two
-            Chaum–Pedersen equations, checked independently, plus <code>β = H(Γ)</code>. The demo also
-            compares the threshold result byte-for-byte against the dealer's direct evaluation
-            <code>sk·P</code> (possible here only because the demo dealer kept <code>sk</code> for
-            teaching).
+            The aggregated proof is four values — <code>(Γ, R<sub>B</sub>, R<sub>P</sub>, z)</code>,
+            128 bytes serialized — whether 3 parties contributed or 300 (the growing part, the round-1
+            broadcasts, deliberately never enters the final proof). Verification needs only the group
+            public key: two Chaum–Pedersen equations, checked independently, plus
+            <code>β = H(Γ)</code>. The demo also compares the threshold result byte-for-byte against the
+            dealer's direct evaluation <code>sk·P</code> (possible here only because the demo dealer
+            kept <code>sk</code> for teaching).
           </p>
           <div class="controls">
             <button type="button" id="verify-btn" disabled>Verify the output publicly</button>
             <button type="button" id="subset-btn" disabled>Re-evaluate with a different subset</button>
           </div>
           <div id="verify-out" class="result" role="status" aria-live="polite"></div>
+
+          <h3>Export the transcript</h3>
+          <div id="export-out" class="result" role="status" aria-live="polite"></div>
+
+          <h3>Verifier workbench — trust nothing from this tab</h3>
+          <p>
+            "Anyone can check it" should be literal, so this verifier shares no state with the exhibits
+            above: it strictly parses a pasted envelope (exact fields, exact lengths, canonical
+            ristretto255 encodings, canonical scalar) and only then runs the two equations. Paste the
+            export from above, an envelope from another tab or machine — or tamper with one character
+            and watch it fail with the field named.
+          </p>
+          <div class="controls">
+            <label for="wb-input">Proof envelope (JSON)</label>
+            <textarea class="envelope-box" id="wb-input" rows="9"
+              placeholder='{ "v": 1, "suite": "crypto-lab-icy-dvrf:v1:ristretto255-SHA512", … }'></textarea>
+            <button type="button" id="wb-verify-btn">Parse and verify envelope</button>
+          </div>
+          <div id="wb-out" class="result" role="status" aria-live="polite"></div>
         </section>
 
         <section class="panel" aria-labelledby="break-h">
           <h2 id="break-h"><span class="exhibit-no">Exhibit 5</span> Break it yourself — cheat, and get caught by the math</h2>
           <p>
-            Make a party misbehave, run the evaluation again, and watch the real verifier react. Corrupt
-            partials fail the DLEQ input equation; a party that swaps nonces after seeing the message fails
-            the key equation, because preprocessing already pinned its nonce; absent parties either don't
-            matter (≥ t remain) or the whole evaluation refuses to emit anything.
+            Make a party misbehave, run the evaluation again, and watch the real verifier react. Four
+            different properties get probed here, and they are not the same thing:
+            <strong>unpredictability</strong> (before round 1, nobody knows β),
+            <strong>fixed-input uniqueness</strong> (for this key and message, no other β can ever
+            verify), <strong>public verifiability</strong> (Exhibit 4), and
+            <strong>liveness</strong> — the one cheaters <em>can</em> attack. A corrupted partial fails
+            the DLEQ input equation; a substituted nonce fails the key equation (a party can still try a
+            post-message swap — it just cannot produce a proof that verifies against the slot it
+            committed before the message existed); a withholder can learn β and then censor it; and
+            absences either don't matter (≥ t remain) or force a fail-closed refusal.
           </p>
           <div id="cheat-controls" class="controls cheat-controls"></div>
           <div class="controls">
@@ -357,8 +388,19 @@
             <li>
               <strong>Simplified:</strong> the protocol follows the structure of Icy-DVRF (eprint
               2026/969) — FROST-style preprocessing, shared-challenge DLEQ, constant-size aggregated
-              proof — but is this demo's own instantiation over ristretto255, not the paper's
-              EVM-targeted parameterization, and none of it is constant-time.
+              proof — but is this demo's <em>own instantiation</em> over ristretto255, not the paper's
+              EVM-targeted parameterization, and equivalence to the paper has not been established.
+              Every hashed byte, encoding, and deliberate deviation is documented in the
+              <a href="https://github.com/systemslibrarian/crypto-lab-icy-dvrf/blob/main/docs/CONSTRUCTION.md">construction map</a>,
+              and frozen transcript vectors pin the instantiation in CI. None of it is constant-time.
+            </li>
+            <li>
+              <strong>Scope of "no bias":</strong> what the exhibits prove is fixed-input uniqueness —
+              for one key and one message, no alternative β can ever verify. They also show what
+              uniqueness does <em>not</em> give you: a coalition that withholds round 2 can learn β and
+              censor it (selective abort). A real beacon preserves the no-steering claim only with a
+              retry rule that keeps the message fixed and replaces the withholder — never by rolling a
+              fresh candidate output.
             </li>
             <li>
               <strong>Not proven:</strong> security against a real adversary. A cheater in this tab is

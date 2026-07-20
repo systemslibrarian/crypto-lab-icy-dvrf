@@ -130,6 +130,22 @@ describe('Icy-style DVRF — full protocol', () => {
     expect(bytesToHex(out.beta!)).toBe(bytesToHex(direct.beta))
   })
 
+  it('a withholder aborts the evaluation after learning the output (selective abort)', () => {
+    const cheats = new Map<number, CheatMode>([[3, 'withhold-response']])
+    const out = runEvaluation(ceremony, freshNonces(ceremony, 'n15'), MESSAGE, [1, 2, 3], { cheats })
+    expect(out.status).toBe('aborted-withheld')
+    expect(out.withheld).toEqual([3])
+    // Censorship, not steering: no publishable output exists...
+    expect(out.beta).toBeUndefined()
+    expect(out.proof).toBeUndefined()
+    // ...but the withholder (and everyone else) already knew β from round 1,
+    // and it is exactly the β an honest rerun without the withholder produces.
+    expect(out.learnedBeta).toBeDefined()
+    const rerun = runEvaluation(ceremony, freshNonces(ceremony, 'n15b'), MESSAGE, [1, 2, 4])
+    expect(rerun.status).toBe('ok')
+    expect(bytesToHex(out.learnedBeta!)).toBe(bytesToHex(rerun.beta!))
+  })
+
   it('a preprocessed nonce pair cannot be spent twice', () => {
     const nonces = freshNonces(ceremony, 'n12')
     expect(runEvaluation(ceremony, nonces, MESSAGE, [1, 2, 3]).status).toBe('ok')

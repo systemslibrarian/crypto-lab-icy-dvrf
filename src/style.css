@@ -57,6 +57,15 @@ html {
   background-color: var(--bg);
 }
 
+/* Border-box everywhere inside the app so padded/bordered blocks (notably the
+   fleet hero's width:100% mobile rule) can never widen the document. */
+#app,
+#app *,
+#app *::before,
+#app *::after {
+  box-sizing: border-box;
+}
+
 body {
   margin: 0;
   font: 16px/1.55 var(--sans);
@@ -252,6 +261,27 @@ body {
   accent-color: var(--accent);
 }
 
+#app textarea.envelope-box {
+  font: 0.78rem/1.45 var(--mono);
+  color: var(--text-h);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  width: 100%;
+  max-width: 46rem;
+  resize: vertical;
+}
+
+#setup-stale:empty {
+  display: none;
+}
+
+.panel h3 {
+  margin: 1.3rem 0 0.4rem;
+  font-size: 1.02rem;
+}
+
 #app fieldset {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -284,6 +314,18 @@ body {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  max-width: 100%;
+}
+
+/* Selects derive their width from the widest option — let them shrink instead
+   of widening the document on narrow viewports. */
+.cheat-controls .cheat-item select {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+#app select {
+  max-width: 100%;
 }
 
 #app select {

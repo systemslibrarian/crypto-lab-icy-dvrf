@@ -7,6 +7,9 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // Driving every exhibit (real curve math per click) plus two axe scans can
+  // exceed the 30 s default on slower machines — measured headroom, no sleeps.
+  timeout: 120_000,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: 'list',

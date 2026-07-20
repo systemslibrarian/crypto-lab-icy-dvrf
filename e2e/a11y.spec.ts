@@ -43,16 +43,21 @@ async function driveDemos(page: Page): Promise<void> {
   await page.locator('#verify-btn').click()
   await expect(page.locator('#verify-out .verdict-ok')).toBeVisible()
 
-  // Exhibit 5 — honest cast produces an output...
+  // Verifier workbench — exported envelope round-trips into a verified state.
+  const envelope = await page.locator('#export-box').inputValue()
+  await page.locator('#wb-input').fill(envelope)
+  await page.locator('#wb-verify-btn').click()
+  await expect(page.locator('#wb-out .verdict-ok')).toBeVisible()
+
+  // Exhibit 5 — selective abort (warn verdict + learned-β box)...
+  await page.locator('#cheat-2').selectOption('withhold-response')
   await page.locator('#break-btn').click()
-  await expect(page.locator('#break-out .verdict-ok')).toBeVisible()
+  await expect(page.locator('#break-out .verdict-warn')).toBeVisible()
   // ...then a cheating cast: corrupt partial → abort verdict, blamed cards.
   await page.locator('#cheat-2').selectOption('corrupt-gamma')
   await page.locator('#break-btn').click()
   await expect(page.locator('#break-out .verdict-bad')).toBeVisible()
   await expect(page.locator('#break-out .party-card.blamed')).toBeVisible()
-
-  await page.waitForTimeout(200)
 }
 
 async function scan(page: Page): Promise<void> {

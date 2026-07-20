@@ -78,6 +78,8 @@ export interface KeyCeremony {
 /** One-time preprocessed nonce material for one party. */
 export interface NoncePair {
   index: number
+  /** Which preprocessing batch this pair belongs to — makes spent material traceable. */
+  batch: number
   /** Secret nonces (d_i, e_i) — stay with the party. */
   d: bigint
   e: bigint
@@ -118,22 +120,29 @@ export interface Proof {
   z: bigint
 }
 
-export type EvalStatus = 'ok' | 'refused-below-threshold' | 'aborted-cheater'
+export type EvalStatus = 'ok' | 'refused-below-threshold' | 'aborted-cheater' | 'aborted-withheld'
 
 export type CheatMode =
   | 'absent' // party never responds
   | 'corrupt-gamma' // party lies about its partial Γ_i
   | 'grind-nonce' // party swaps in a fresh nonce, ignoring its preprocessed commitment
+  | 'withhold-response' // party broadcasts round 1, computes the output, then refuses round 2
 
 export interface Transcript {
   status: EvalStatus
   message: string
   /** Input point P = H2G(message). */
   input: GroupElement
+  /** Preprocessing batch this evaluation consumed. */
+  batch: number
+  /** The exact (D_i, E_i) commitments the binding factors and proof trace back to. */
+  commitments: RosterCommitment[]
   /** Indices asked to participate, and those that actually responded. */
   roster: number[]
   responders: number[]
   absent: number[]
+  /** Parties that broadcast round 1 but refused round 2 (selective abort). */
+  withheld: number[]
   partials: PartialRecord[]
   /** Aggregates (present when enough parties responded). */
   rB?: GroupElement
@@ -143,6 +152,12 @@ export interface Transcript {
   /** Final output and proof (present only when status === 'ok'). */
   beta?: Uint8Array
   proof?: Proof
+  /**
+   * What everyone — including a withholder — could already compute from the
+   * round-1 broadcasts alone. Selective abort censors publication; it cannot
+   * select a different output.
+   */
+  learnedBeta?: Uint8Array
   /** Parties whose DLEQ failed — publicly identifiable. */
   blamed: number[]
 }
@@ -165,10 +180,10 @@ export function dealerKeygen(n: number, t: number, rng: Rng = defaultRng): KeyCe
 // ---------------------------------------------------------------------------
 // Phase 1 — offline preprocessing (message-independent, FROST-style)
 
-export function preprocess(party: PartyKey, rng: Rng = defaultRng): NoncePair {
+export function preprocess(party: PartyKey, rng: Rng = defaultRng, batch = 1): NoncePair {
   const d = randomScalar(rng)
   const e = randomScalar(rng)
-  return { index: party.index, d, e, D: baseMul(d), E: baseMul(e), used: false }
+  return { index: party.index, batch, d, e, D: baseMul(d), E: baseMul(e), used: false }
 }
 
 // ---------------------------------------------------------------------------
@@ -330,13 +345,23 @@ export function runEvaluation(
 
   const absent = roster.filter((i) => cheats.get(i) === 'absent')
   const responders = roster.filter((i) => cheats.get(i) !== 'absent')
+  const withheld = responders.filter((i) => cheats.get(i) === 'withhold-response')
+  const batch = roster.length > 0 ? nonces.get(roster[0])!.batch : 0
+
+  const commitments: RosterCommitment[] = responders.map((i) => {
+    const np = nonces.get(i)!
+    return { index: i, D: np.D, E: np.E }
+  })
 
   const base: Omit<Transcript, 'status'> = {
     message,
     input,
+    batch,
+    commitments,
     roster,
     responders,
     absent,
+    withheld,
     partials: [],
     blamed: [],
   }
@@ -346,11 +371,6 @@ export function runEvaluation(
   if (responders.length < ceremony.t) {
     return { ...base, status: 'refused-below-threshold' }
   }
-
-  const commitments: RosterCommitment[] = responders.map((i) => {
-    const np = nonces.get(i)!
-    return { index: i, D: np.D, E: np.E }
-  })
 
   // Round 1 — each responder broadcasts (Γ_i, R_i^P).
   const states = new Map<number, Round1State>()
@@ -377,6 +397,23 @@ export function runEvaluation(
 
   // Phase 3 — everyone derives the same challenge from the broadcasts.
   const shared = sharedChallenge(ceremony.groupPk, msg, commitments, round1Msgs)
+
+  // Selective abort: a withholder has everything it needs to compute the
+  // output right now (Γ = Σ λ_i·Γ_i is public after round 1) — but by refusing
+  // round 2 it stops the proof from being completed with this participant set.
+  // λ was fixed over the round-1 set, so the others cannot route around the
+  // missing z_i; the evaluation aborts and must rerun without the withholder.
+  if (withheld.length > 0) {
+    return {
+      ...base,
+      status: 'aborted-withheld',
+      rB: shared.rB,
+      rP: shared.rP,
+      c: shared.c,
+      gamma: shared.gamma,
+      learnedBeta: outputBeta(shared.gamma),
+    }
+  }
 
   // Round 2 — responses, then public per-party DLEQ checks.
   const partials: PartialRecord[] = round1Msgs.map((m) => {
