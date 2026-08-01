@@ -77,7 +77,7 @@ function chip(kind: 'ok' | 'bad' | 'warn', icon: string, label: string): string 
 }
 
 function verdict(kind: 'ok' | 'bad' | 'warn', title: string, body: string): string {
-  return `<div class="verdict verdict-${kind}"><h4>${title}</h4>${body}</div>`
+  return `<div class="verdict verdict-${kind}"><h3>${title}</h3>${body}</div>`
 }
 
 function msgChip(label: string, value: string): string {
@@ -89,7 +89,7 @@ function partyCards(ceremony: KeyCeremony, extras?: (i: number) => string, blame
     .map(
       (p) => `
       <div class="party-card${blamed.includes(p.index) ? ' blamed' : ''}">
-        <h4>Party ${p.index}${blamed.includes(p.index) ? ` ${chip('bad', '✘', 'blamed')}` : ''}</h4>
+        <h3>Party ${p.index}${blamed.includes(p.index) ? ` ${chip('bad', '✘', 'blamed')}` : ''}</h3>
         <p class="kv"><b>PK<sub>${p.index}</sub></b> ${short(pointHex(p.pk))}</p>
         ${extras ? extras(p.index) : ''}
       </div>`,
@@ -278,7 +278,7 @@ function buildSteps(tr: Transcript): void {
   }
 
   push(
-    `<h4><span class="phase-tag">input</span> Hash the message onto the curve</h4>
+    `<h3><span class="phase-tag">input</span> Hash the message onto the curve</h3>
      <p>Everyone maps the message to the same point <code>P = HashToGroup(m)</code>. All partials will be
      multiples of this exact point. This walk consumed nonce batch #${tr.batch} — its commitments stay
      visible in Exhibit 2.</p>
@@ -288,7 +288,7 @@ function buildSteps(tr: Transcript): void {
 
   if (tr.status === 'refused-below-threshold') {
     push(
-      `<h4><span class="phase-tag">refused</span> Not enough responders</h4>
+      `<h3><span class="phase-tag">refused</span> Not enough responders</h3>
        <p>Only ${tr.responders.length} of the required t = ${state.ceremony!.t} parties responded. The
        aggregator emits <em>nothing</em> — a threshold system fails closed rather than producing an
        unverifiable output.</p>`,
@@ -296,7 +296,7 @@ function buildSteps(tr: Transcript): void {
     )
   } else {
     push(
-      `<h4><span class="phase-tag">online round 1</span> Broadcast partials and input-base nonces</h4>
+      `<h3><span class="phase-tag">online round 1</span> Broadcast partials and input-base nonces</h3>
        <p>Each participant i derives its binding factor ρ<sub>i</sub> (hash of the message, the roster, and
        every batch-#${tr.batch} commitment), forms its one-time nonce k<sub>i</sub> = d<sub>i</sub> +
        ρ<sub>i</sub>·e<sub>i</sub>, and broadcasts its partial Γ<sub>i</sub> = x<sub>i</sub>·P together with
@@ -307,7 +307,7 @@ function buildSteps(tr: Transcript): void {
       ['icy-1'],
     )
     push(
-      `<h4><span class="phase-tag">derived locally</span> One shared challenge for the whole set</h4>
+      `<h3><span class="phase-tag">derived locally</span> One shared challenge for the whole set</h3>
        <p>Anyone can now combine the broadcasts with Lagrange weights λ<sub>i</sub> — and the key-base
        commitments R<sub>i</sub><sup>B</sup> = D<sub>i</sub> + ρ<sub>i</sub>·E<sub>i</sub> come straight
        from offline batch #${tr.batch}. One Fiat–Shamir challenge c covers every party, which is what lets
@@ -320,7 +320,7 @@ function buildSteps(tr: Transcript): void {
       ['icy-1'],
     )
     push(
-      `<h4><span class="phase-tag">online round 2</span> Broadcast responses</h4>
+      `<h3><span class="phase-tag">online round 2</span> Broadcast responses</h3>
        <p>Each participant answers the shared challenge with z<sub>i</sub> = k<sub>i</sub> +
        c·x<sub>i</sub>. Two rounds total — the commit round happened in the offline batch.</p>
        <div class="msg-chips">${tr.partials
@@ -339,7 +339,7 @@ function buildSteps(tr: Transcript): void {
 
     if (tr.status === 'aborted-cheater') {
       push(
-        `<h4><span class="phase-tag">checks</span> Per-party DLEQ verification — cheater caught</h4>
+        `<h3><span class="phase-tag">checks</span> Per-party DLEQ verification — cheater caught</h3>
          <p>Every partial is checked against that party's public share. The math names the liar:</p>
          <div class="msg-chips">${checksHtml}</div>
          <p>The evaluation aborts with <em>no output at all</em> (fail closed). Rerun with honest parties —
@@ -348,7 +348,7 @@ function buildSteps(tr: Transcript): void {
       )
     } else {
       push(
-        `<h4><span class="phase-tag">aggregate</span> Checks pass — fold t transcripts into one proof</h4>
+        `<h3><span class="phase-tag">aggregate</span> Checks pass — fold t transcripts into one proof</h3>
          <p>All partials verify: ${checksHtml}</p>
          <p>Lagrange-weighted sums produce the single proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) —
          ${PROOF_BYTES} bytes, the same size for any t — and the output β = H(Γ).</p>`,
@@ -426,7 +426,7 @@ function finishEvaluation(): void {
     renderExport(current)
     $('eval-out').innerHTML = `
       <div class="beta-box">
-        <h4>β — the group's verifiable random output</h4>
+        <h3>β — the group's verifiable random output</h3>
         <p class="beta-hex">${betaHex(current.beta!)}</p>
       </div>
       <p>Proof (Γ, R<sub>B</sub>, R<sub>P</sub>, z) — ${PROOF_BYTES} bytes, constant in t. Take it to
@@ -493,14 +493,14 @@ function runVerify(): void {
        proof.</p>`,
     )}
     <h3>Compute both sides — threshold vs. the dealer's direct evaluation</h3>
-    <table class="compare-table">
+    <div class="table-scroll"><table class="compare-table">
       <tr><th scope="row">β from ${lastOk.responders.length} parties (indices ${lastOk.responders.join(', ')})</th>
           <td class="mono">${betaHex(lastOk.beta)}</td></tr>
       <tr><th scope="row">β from sk directly (demo dealer only)</th>
           <td class="mono">${bytesToHex(direct.beta)}</td></tr>
       <tr><th scope="row">Byte-for-byte</th>
           <td>${same ? chip('ok', '✔', 'identical') : chip('bad', '✘', 'MISMATCH')}</td></tr>
-    </table>`
+    </table></div>`
 }
 
 function runSubsetCompare(): void {
@@ -530,11 +530,11 @@ function runSubsetCompare(): void {
        t parties show up cannot steer it. (What a coalition can still do is refuse to finish, so a real
        beacon must keep the message fixed on retry — see Exhibit 5.)</p>`,
     )}
-    <table class="compare-table">
+    <div class="table-scroll"><table class="compare-table">
       <tr><th scope="row">β from parties ${lastOk.responders.join(', ')}</th><td class="mono">${betaHex(lastOk.beta)}</td></tr>
       <tr><th scope="row">β from parties ${tr.responders.join(', ')}</th><td class="mono">${betaHex(tr.beta!)}</td></tr>
       <tr><th scope="row">Byte-for-byte</th><td>${same ? chip('ok', '✔', 'identical') : chip('bad', '✘', 'MISMATCH')}</td></tr>
-    </table>`
+    </table></div>`
 }
 
 function runWorkbench(): void {
@@ -664,7 +664,7 @@ function runBreak(): void {
       `<p>Part${tr.withheld.length === 1 ? 'y' : 'ies'} ${tr.withheld.join(', ')} broadcast round 1,
        watched everyone else's partials arrive, computed the eventual output — and then refused round 2,
        so the proof cannot be completed with this participant set.</p>
-       <div class="beta-box"><h4>The β the withholder already knew</h4>
+       <div class="beta-box"><h3>The β the withholder already knew</h3>
        <p class="beta-hex">${betaHex(tr.learnedBeta!)}</p></div>
        <p>This is the honest limit of "no bias": for a fixed key and message no <em>other</em> β can ever
        be produced, but a coalition can still censor publication. A real beacon must therefore keep the
@@ -690,7 +690,7 @@ function runBreak(): void {
        <em>input</em> equation, and a substituted nonce breaks the <em>key</em> equation — a party can
        still <em>try</em> a post-message nonce swap, but no substitution can pass verification against
        the (D, E) slot it committed to before the message existed.</p>
-       <table class="compare-table"><tr><th scope="col">Party</th><th scope="col">DLEQ checks</th><th scope="col">Verdict</th></tr>${rows}</table>
+       <div class="table-scroll"><table class="compare-table"><tr><th scope="col">Party</th><th scope="col">DLEQ checks</th><th scope="col">Verdict</th></tr>${rows}</table></div>
        <p>No output was produced. Rerun with honest parties to see that the cheater delayed the beacon
        but could not bend it (same message, same β).</p>`,
     )}${partyCards(ceremony, undefined, tr.blamed)}`
@@ -705,7 +705,7 @@ function runBreak(): void {
         ? `${tr.absent.length} part${tr.absent.length === 1 ? 'y was' : 'ies were'} absent, but ${tr.responders.length} ≥ t responded — availability is exactly what the threshold buys.`
         : 'All participants responded honestly.'
     }</p>
-     <div class="beta-box"><h4>β</h4><p class="beta-hex">${betaHex(tr.beta!)}</p></div>`,
+     <div class="beta-box"><h3>β</h3><p class="beta-hex">${betaHex(tr.beta!)}</p></div>`,
   )}`
   if (!state.lastOk) {
     state.lastOk = tr
@@ -745,7 +745,7 @@ function runHonestRerun(): void {
           : ' a β for this message.'
         : ' a verifiable β.'
     }</p>
-     <div class="beta-box"><h4>β</h4><p class="beta-hex">${betaHex(tr.beta!)}</p></div>
+     <div class="beta-box"><h3>β</h3><p class="beta-hex">${betaHex(tr.beta!)}</p></div>
      ${reference !== undefined ? `<p>Earlier successful run: ${same ? chip('ok', '✔', 'byte-for-byte identical') : chip('warn', '⚠', 'different message')}</p>` : ''}`,
   )
   state.lastOk = tr
