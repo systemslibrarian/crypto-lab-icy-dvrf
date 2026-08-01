@@ -122,8 +122,9 @@ rows are **derived** from the schemes' published structure, not benchmarked here
 
 ## Deliberate deviations from the paper
 
-1. **Group:** ristretto255 instead of the paper's EVM-oriented curve setting (the paper reports
-   gas costs on Sepolia; nothing EVM-related is reproduced here).
+1. **Group:** ristretto255 instead of the paper's EVM-oriented curve setting (its abstract benchmarks
+   on-chain verification on Sepolia via the **EIP-2537 BLS12-381 precompiles** at 88,803 gas; nothing
+   EVM-related, and no BLS12-381 arithmetic, is reproduced here).
 2. **Key generation:** trusted dealer instead of a DKG. The dealer's secret is retained solely to
    power the compare-both-sides exhibit.
 3. **Transcripts:** the framing, domain-separation strings, binding-factor inputs, challenge input

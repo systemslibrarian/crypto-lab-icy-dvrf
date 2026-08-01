@@ -42,6 +42,12 @@ interface AppState {
   nextBatchId: number
   /** Last successful evaluation (feeds Exhibits 4 and 5). */
   lastOk?: Transcript
+  /**
+   * The β a withholder learned in the most recent selective abort. Kept so the
+   * honest rerun can actually show the byte-for-byte comparison the abort
+   * verdict promises, even when no successful run preceded it.
+   */
+  lastWithheld?: { message: string; beta: Uint8Array }
   steps: string[]
   ladderRungs: string[][]
   stepIndex: number
@@ -148,6 +154,7 @@ function runSetup(): void {
   state.spent = undefined
   state.nextBatchId = 1
   state.lastOk = undefined
+  state.lastWithheld = undefined
   resetEvaluation()
   $('pre-out').innerHTML = ''
   $('verify-out').innerHTML = ''
@@ -658,6 +665,7 @@ function runBreak(): void {
   }
 
   if (tr.status === 'aborted-withheld') {
+    state.lastWithheld = { message: tr.message, beta: tr.learnedBeta! }
     $('break-out').innerHTML = `${cheatSummary}${verdict(
       'warn',
       '⚠ Selective abort — output learned, publication censored',
@@ -715,8 +723,25 @@ function runBreak(): void {
   }
 }
 
+/**
+ * What the rerun should reproduce byte-for-byte, for this exact message: an
+ * earlier successful β if there is one, otherwise the β a withholder already
+ * learned during a selective abort. Both are real computed values — the whole
+ * point of the comparison is that no cheat could have moved either one.
+ */
+function rerunReference(message: string): { beta: string; label: string } | undefined {
+  const { lastOk, lastWithheld } = state
+  if (lastOk?.beta && lastOk.message === message) {
+    return { beta: betaHex(lastOk.beta), label: 'Earlier successful run' }
+  }
+  if (lastWithheld && lastWithheld.message === message) {
+    return { beta: betaHex(lastWithheld.beta), label: 'β the withholder had already learned' }
+  }
+  return undefined
+}
+
 function runHonestRerun(): void {
-  const { ceremony, lastOk, queued } = state
+  const { ceremony, queued } = state
   if (!ceremony || !queued) return
   const cheats = selectedCheats()
   const honest = ceremony.parties.map((p) => p.index).filter((i) => !cheats.has(i))
@@ -733,20 +758,30 @@ function runHonestRerun(): void {
   const tr = runEvaluation(ceremony, queued.nonces, msgInput.value, roster)
   consumeBatch(tr.message, tr.responders)
   if (tr.status !== 'ok') return
-  const reference = lastOk && lastOk.message === tr.message ? betaHex(lastOk.beta!) : undefined
-  const same = reference !== undefined && reference === betaHex(tr.beta!)
+  const reference = rerunReference(tr.message)
+  const same = reference !== undefined && reference.beta === betaHex(tr.beta!)
   $('break-out').innerHTML = verdict(
-    'ok',
-    '✔ Honest threshold delivers',
+    reference !== undefined && !same ? 'bad' : 'ok',
+    reference !== undefined && !same ? '✘ Outputs differ — this should never happen' : '✔ Honest threshold delivers',
     `<p>Parties ${tr.responders.join(', ')} produced${
       reference !== undefined
         ? same
-          ? ' <strong>the identical β</strong> the earlier successful run produced — cheating delayed the beacon, it never steered it.'
-          : ' a β for this message.'
-        : ' a verifiable β.'
+          ? ` <strong>the identical β</strong> as the ${reference.label.toLowerCase()} — cheating delayed the beacon, it never steered it.`
+          : ' a β that does <strong>not</strong> match the reference for this same message — for a fixed group key and message that is impossible, so treat it as a bug in this demo.'
+        : ' a verifiable β. (No earlier β exists for this message yet, so there is nothing to compare it against — run an evaluation or a selective abort on the same message first.)'
     }</p>
      <div class="beta-box"><h3>β</h3><p class="beta-hex">${betaHex(tr.beta!)}</p></div>
-     ${reference !== undefined ? `<p>Earlier successful run: ${same ? chip('ok', '✔', 'byte-for-byte identical') : chip('warn', '⚠', 'different message')}</p>` : ''}`,
+     ${
+       reference !== undefined
+         ? `<div class="table-scroll"><table class="compare-table">
+              <tr><th scope="row">${reference.label}</th><td class="mono">${reference.beta}</td></tr>
+              <tr><th scope="row">β from parties ${tr.responders.join(', ')}</th><td class="mono">${betaHex(tr.beta!)}</td></tr>
+              <tr><th scope="row">Byte-for-byte</th><td>${
+                same ? chip('ok', '✔', 'identical') : chip('bad', '✘', 'MISMATCH')
+              }</td></tr>
+            </table></div>`
+         : ''
+     }`,
   )
   state.lastOk = tr
   verifyBtn.disabled = false

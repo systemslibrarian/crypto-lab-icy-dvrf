@@ -2,7 +2,7 @@
  * Known-answer tests from RFC 9496 (ristretto255) pinning the group layer:
  *   A.1  16 generator-multiple encodings (B[0]..B[15])
  *   A.2  29 invalid encodings that MUST be rejected
- *   A.5   7 element-derivation (one-way map) vectors
+ *   A.3   7 element-derivation (one-way map) input/output pairs
  * 52 spec KATs total.
  */
 import { describe, expect, it } from 'vitest'
@@ -66,8 +66,8 @@ const INVALID_ENCODINGS = [
   'ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f',
 ]
 
-// A.5 — inputs are the SHA-512 digests of the RFC's label strings; outputs are
-// the derived elements.
+// A.3 — the RFC's 64-byte uniform inputs to the element derivation function of
+// Section 4.3.4, and their encoded outputs, copied verbatim from the RFC.
 const ONE_WAY_MAP: Array<[string, string]> = [
   [
     '5d1be09e3d0c82fc538112490e35701979d99e06ca3e2b5b54bffe8b4dc772c14d98b696a1bbfb5ca32c436cc61c16563790306c79eaca7705668b47dffe5bb6',
@@ -119,7 +119,7 @@ describe('RFC 9496 A.2 — invalid encodings are rejected (29 KATs)', () => {
   })
 })
 
-describe('RFC 9496 A.5 — element derivation one-way map (7 KATs)', () => {
+describe('RFC 9496 A.3 — element derivation one-way map (7 KATs)', () => {
   ONE_WAY_MAP.forEach(([input, expected], i) => {
     it(`derives element #${i + 1}`, () => {
       const p = ristretto255_hasher.deriveToCurve!(hexToBytes(input))

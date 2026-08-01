@@ -98,8 +98,12 @@ math name them.
 Distributed randomness beacons power validator and leader elections (Algorand-style sortition,
 drand/League of Entropy), on-chain lotteries and gaming (Chainlink VRF is single-party VRF; DVRFs like
 GLOW and DDH-DVRF decentralize the trust), and committee sampling in consensus protocols. Icy-DVRF's
-contribution is doing this pairing-free with constant-size proofs and FROST-style low online latency —
-the properties this demo makes visible.
+stated contribution is FROST-style preprocessing that cuts DVRFwCP's added communication from O(n²t)
+to O(t) while keeping proofs constant-size — at the cost, its abstract says, of one extra *off-chain*
+round relative to DDH-DVRF and GLOW-DVRF. (Its on-chain verifier is not pairing-free: the paper
+benchmarks 88,803 gas on Sepolia using the EIP-2537 BLS12-381 precompiles, 43% below the pairing-based
+constructions it compares against.) The constant proof size and the low online round count are the
+properties this demo makes visible; the gas and curve figures are the paper's, not this demo's.
 
 ## How to Run Locally
 
