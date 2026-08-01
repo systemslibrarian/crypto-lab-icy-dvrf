@@ -5,6 +5,14 @@
   --bg: #0d1519;
   --panel: #121d23;
   --border: #24343c;
+  /* Control boundaries only (WCAG 2.1 SC 1.4.11). Text inputs, the envelope
+     textarea and selects are filled with --code-bg (#0a1114), which is 1.11:1
+     against --bg and 1.35:1 against --panel, so the border is the only thing
+     delineating the control. #5f757e keeps the icy blue-teal cast of --border
+     and clears 3:1 on every surface a control sits on: 3.81:1 on --bg, 3.53:1
+     on --panel, 3.93:1 on --code-bg. --border is unchanged for decorative
+     rules — panel outlines, fieldsets, dividers, table rules. */
+  --border-strong: #5f757e;
   --text: #c6d4da;
   --text-h: #e9f2f5;
   --text-dim: #93a7b0;
@@ -32,6 +40,10 @@
   --bg: #f4f9fa;
   --panel: #ffffff;
   --border: #cfdde2;
+  /* Light-theme control boundary, same rationale as the dark token above.
+     #748489: 3.89:1 on --panel (#ffffff), 3.66:1 on --bg, 3.39:1 on
+     --code-bg. */
+  --border-strong: #748489;
   --text: #2c3b42;
   --text-h: #10222a;
   --text-dim: #4f646d;
@@ -254,7 +266,9 @@ body {
   font: 0.95rem var(--mono);
   color: var(--text-h);
   background: var(--code-bg);
-  border: 1px solid var(--border);
+  /* --border-strong, not --border: the --code-bg fill is within 1.35:1 of the
+     panel behind it, so this border is load-bearing. See token for ratios. */
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 0.5rem 0.7rem;
   min-width: min(22rem, 100%);
@@ -278,7 +292,8 @@ body {
   font: 0.78rem/1.45 var(--mono);
   color: var(--text-h);
   background: var(--code-bg);
-  border: 1px solid var(--border);
+  /* --border-strong, not --border: see #app input[type='text'] above. */
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 0.55rem 0.7rem;
   width: 100%;
@@ -359,7 +374,8 @@ body {
     5px 5px,
     5px 5px;
   background-repeat: no-repeat;
-  border: 1px solid var(--border);
+  /* --border-strong, not --border: see #app input[type='text'] above. */
+  border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 0.4rem 1.8rem 0.4rem 0.6rem;
   min-height: 44px;
