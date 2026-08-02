@@ -156,8 +156,31 @@ export interface Transcript {
    * What everyone — including a withholder — could already compute from the
    * round-1 broadcasts alone. Selective abort censors publication; it cannot
    * select a different output.
+   *
+   * Set ONLY when every partial in that round-1 aggregate went on to pass its
+   * DLEQ check. An aggregate containing a partial that fails verification is
+   * not an output at all, so it is reported as {@link contestedBeta} instead.
    */
   learnedBeta?: Uint8Array
+  /**
+   * H(Γ) over a round-1 aggregate that contains at least one partial which
+   * later failed its DLEQ — the value a withholder in a mixed cast actually
+   * computed. It is deliberately NOT called β: no participant set could ever
+   * have published it, because round 2 names the bad partial and aborts.
+   */
+  contestedBeta?: Uint8Array
+  /**
+   * In an aborted-withheld run, the responders whose partials did answer
+   * round 2 and passed DLEQ. Withholders are absent from this list by
+   * construction: with no z_i there is nothing to verify.
+   */
+  verifiedPartials?: number[]
+  /**
+   * The output determined by {@link verifiedPartials} alone, recomputed with
+   * Lagrange weights over that subset — present only when those partials still
+   * reach t. When it is absent, the cast determines no publishable output.
+   */
+  verifiedSubsetBeta?: Uint8Array
   /** Parties whose DLEQ failed — publicly identifiable. */
   blamed: number[]
 }
@@ -398,37 +421,83 @@ export function runEvaluation(
   // Phase 3 — everyone derives the same challenge from the broadcasts.
   const shared = sharedChallenge(ceremony.groupPk, msg, commitments, round1Msgs)
 
+  /** Round 2 + public DLEQ check for a set of round-1 broadcasts. */
+  const respond = (msgs: Round1Msg[]): PartialRecord[] =>
+    msgs.map((m) => {
+      const party = partiesByIndex.get(m.index)!
+      const z = round2(party, states.get(m.index)!, shared.c)
+      const check = verifyDleq(party.pk, input, m.gamma, shared.rBs.get(m.index)!, m.rP, shared.c, z)
+      return {
+        ...m,
+        rho: shared.rhos.get(m.index)!,
+        rB: shared.rBs.get(m.index)!,
+        lambda: shared.lambdas.get(m.index)!,
+        z,
+        check,
+      }
+    })
+
   // Selective abort: a withholder has everything it needs to compute the
   // output right now (Γ = Σ λ_i·Γ_i is public after round 1) — but by refusing
   // round 2 it stops the proof from being completed with this participant set.
   // λ was fixed over the round-1 set, so the others cannot route around the
   // missing z_i; the evaluation aborts and must rerun without the withholder.
   if (withheld.length > 0) {
+    // Everyone who did NOT withhold still publishes round 2 — that is exactly
+    // the step that exposes a corrupted or reground partial. Run it, so a
+    // MIXED cast is scored against what actually verified rather than against
+    // the raw round-1 aggregate.
+    const answered = respond(round1Msgs.filter((m) => !withheld.includes(m.index)))
+    const blamed = answered.filter((p) => !p.check.ok).map((p) => p.index)
+    const verifiedPartials = answered.filter((p) => p.check.ok).map((p) => p.index)
+    const rawBeta = outputBeta(shared.gamma)
+
+    // Uncontested: every partial that could be checked passed, so the round-1
+    // aggregate really is the protocol's output and the withholder knows it.
+    if (blamed.length === 0) {
+      return {
+        ...base,
+        status: 'aborted-withheld',
+        partials: answered,
+        rB: shared.rB,
+        rP: shared.rP,
+        c: shared.c,
+        gamma: shared.gamma,
+        learnedBeta: rawBeta,
+      }
+    }
+
+    // Contested: the aggregate the withholder saw includes a partial that
+    // fails verification, so H(Γ) over it is not β — it is a value no
+    // participant set could have published. What the cast CAN determine is
+    // whatever the verified partials determine, and only if they still reach t.
+    let verifiedSubsetBeta: Uint8Array | undefined
+    if (verifiedPartials.length >= ceremony.t) {
+      let subsetGamma = Point.ZERO
+      for (const p of answered) {
+        if (!p.check.ok) continue
+        subsetGamma = subsetGamma.add(mul(p.gamma, lagrangeAt0(verifiedPartials, p.index)))
+      }
+      verifiedSubsetBeta = outputBeta(subsetGamma)
+    }
+
     return {
       ...base,
       status: 'aborted-withheld',
+      partials: answered,
+      blamed,
       rB: shared.rB,
       rP: shared.rP,
       c: shared.c,
       gamma: shared.gamma,
-      learnedBeta: outputBeta(shared.gamma),
+      contestedBeta: rawBeta,
+      verifiedPartials,
+      verifiedSubsetBeta,
     }
   }
 
   // Round 2 — responses, then public per-party DLEQ checks.
-  const partials: PartialRecord[] = round1Msgs.map((m) => {
-    const party = partiesByIndex.get(m.index)!
-    const z = round2(party, states.get(m.index)!, shared.c)
-    const check = verifyDleq(party.pk, input, m.gamma, shared.rBs.get(m.index)!, m.rP, shared.c, z)
-    return {
-      ...m,
-      rho: shared.rhos.get(m.index)!,
-      rB: shared.rBs.get(m.index)!,
-      lambda: shared.lambdas.get(m.index)!,
-      z,
-      check,
-    }
-  })
+  const partials: PartialRecord[] = respond(round1Msgs)
 
   const blamed = partials.filter((p) => !p.check.ok).map((p) => p.index)
   const aggregates = { partials, rB: shared.rB, rP: shared.rP, c: shared.c, gamma: shared.gamma, blamed }

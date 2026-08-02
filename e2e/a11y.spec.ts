@@ -58,6 +58,14 @@ async function driveDemos(page: Page): Promise<void> {
   await page.locator('#break-btn').click()
   await expect(page.locator('#break-out .verdict-bad')).toBeVisible()
   await expect(page.locator('#break-out .party-card.blamed')).toBeVisible()
+  // ...and a MIXED cast, whose contested-aggregate box, unverifiable-partial
+  // row and settled-subset box are markup no other run puts in the DOM.
+  await page.locator('input[name="roster"][value="4"]').check()
+  await page.locator('input[name="roster"][value="5"]').check()
+  await page.locator('#cheat-1').selectOption('corrupt-gamma')
+  await page.locator('#cheat-2').selectOption('withhold-response')
+  await page.locator('#break-btn').click()
+  await expect(page.locator('#break-out .beta-box-contested')).toBeVisible()
 }
 
 async function scan(page: Page): Promise<void> {

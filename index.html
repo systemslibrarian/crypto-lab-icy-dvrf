@@ -372,7 +372,10 @@
             <strong>liveness</strong> — the one cheaters <em>can</em> attack. A corrupted partial fails
             the DLEQ input equation; a substituted nonce fails the key equation (a party can still try a
             post-message swap — it just cannot produce a proof that verifies against the slot it
-            committed before the message existed); a withholder can learn β and then censor it; and
+            committed before the message existed); a withholder can learn β and then censor it (though
+            when someone <em>also</em> corrupts a partial, the aggregate it saw is one verification
+            rejects — so the run reports what the verified partials determine, or that nothing
+            publishable was determined at all); and
             absences either don't matter (≥ t remain) or force a fail-closed refusal.
           </p>
           <div id="cheat-controls" class="controls cheat-controls"></div>

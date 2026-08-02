@@ -141,9 +141,92 @@ describe('Icy-style DVRF — full protocol', () => {
     // ...but the withholder (and everyone else) already knew β from round 1,
     // and it is exactly the β an honest rerun without the withholder produces.
     expect(out.learnedBeta).toBeDefined()
+    expect(out.contestedBeta).toBeUndefined()
     const rerun = runEvaluation(ceremony, freshNonces(ceremony, 'n15b'), MESSAGE, [1, 2, 4])
     expect(rerun.status).toBe('ok')
     expect(bytesToHex(out.learnedBeta!)).toBe(bytesToHex(rerun.beta!))
+  })
+
+  /**
+   * A MIXED cast — one party corrupts its partial, another withholds round 2 —
+   * used to report H(Γ) over the round-1 aggregate as "the β the withholder
+   * already knew". That aggregate contains a partial that fails DLEQ, so it is
+   * not any publishable output; labelling it β made the page contradict itself
+   * on the honest rerun. It must now be scored against the partials that would
+   * actually have verified.
+   */
+  it('a mixed corrupt+withhold cast learns no output — the aggregate is contested', () => {
+    const cheats = new Map<number, CheatMode>([
+      [1, 'corrupt-gamma'],
+      [2, 'withhold-response'],
+    ])
+    const out = runEvaluation(ceremony, freshNonces(ceremony, 'n16'), MESSAGE, [1, 2, 3], { cheats })
+    expect(out.status).toBe('aborted-withheld')
+
+    // No output was learned: the corrupted partial is named, not absorbed.
+    expect(out.learnedBeta).toBeUndefined()
+    expect(out.blamed).toEqual([1])
+    expect(out.verifiedPartials).toEqual([3])
+
+    // The contested value is surfaced as what it is — and it is demonstrably
+    // NOT this message's output.
+    const direct = evaluateDirect(ceremony.dealerSecret, utf8ToBytes(MESSAGE))
+    expect(out.contestedBeta).toBeDefined()
+    expect(bytesToHex(out.contestedBeta!)).not.toBe(bytesToHex(direct.beta))
+
+    // Only 1 partial verified but t = 3, so the cast determines nothing.
+    expect(out.verifiedSubsetBeta).toBeUndefined()
+  })
+
+  it('a mixed cast with t verified partials left settles on the real output', () => {
+    const cheats = new Map<number, CheatMode>([
+      [1, 'corrupt-gamma'],
+      [2, 'withhold-response'],
+    ])
+    const out = runEvaluation(ceremony, freshNonces(ceremony, 'n17'), MESSAGE, [1, 2, 3, 4, 5], {
+      cheats,
+    })
+    expect(out.status).toBe('aborted-withheld')
+    expect(out.learnedBeta).toBeUndefined()
+    expect(out.blamed).toEqual([1])
+    expect(out.verifiedPartials).toEqual([3, 4, 5])
+
+    // Parties 3, 4, 5 verified and still reach t, so Γ recomputed over just
+    // that subset is the genuine output — byte-identical to the dealer's own
+    // direct evaluation and to an honest rerun.
+    const direct = evaluateDirect(ceremony.dealerSecret, utf8ToBytes(MESSAGE))
+    expect(out.verifiedSubsetBeta).toBeDefined()
+    expect(bytesToHex(out.verifiedSubsetBeta!)).toBe(bytesToHex(direct.beta))
+
+    // …and the contested aggregate is a different value entirely, which is the
+    // whole reason it must never be published as β.
+    expect(bytesToHex(out.contestedBeta!)).not.toBe(bytesToHex(direct.beta))
+
+    const rerun = runEvaluation(ceremony, freshNonces(ceremony, 'n17b'), MESSAGE, [3, 4, 5])
+    expect(rerun.status).toBe('ok')
+    expect(bytesToHex(out.verifiedSubsetBeta!)).toBe(bytesToHex(rerun.beta!))
+  })
+
+  /**
+   * A reground nonce leaves Γ_i alone, so the aggregate happens to coincide
+   * with the real output — but it still contains a partial that verification
+   * rejects, so it is still contested. The subset recomputation is what turns
+   * that coincidence into something actually checked.
+   */
+  it('a grind+withhold cast is contested even though its aggregate coincides', () => {
+    const cheats = new Map<number, CheatMode>([
+      [1, 'grind-nonce'],
+      [2, 'withhold-response'],
+    ])
+    const out = runEvaluation(ceremony, freshNonces(ceremony, 'n18'), MESSAGE, [1, 2, 3, 4, 5], {
+      cheats,
+    })
+    const direct = evaluateDirect(ceremony.dealerSecret, utf8ToBytes(MESSAGE))
+    expect(out.status).toBe('aborted-withheld')
+    expect(out.learnedBeta).toBeUndefined()
+    expect(out.blamed).toEqual([1])
+    expect(bytesToHex(out.contestedBeta!)).toBe(bytesToHex(direct.beta))
+    expect(bytesToHex(out.verifiedSubsetBeta!)).toBe(bytesToHex(direct.beta))
   })
 
   it('a preprocessed nonce pair cannot be spent twice', () => {

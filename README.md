@@ -87,6 +87,12 @@ math name them.
 - **Selective abort** — after round 1, everyone (including a withholder) can compute β; refusing
   round 2 censors publication. No alternative β exists, but a surrounding beacon that changes the
   message or rolls a fresh candidate on retry converts censorship into bias — the retry rule matters.
+  In a *mixed* cast, where someone also corrupts a partial, the round-1 aggregate contains a partial
+  that verification rejects — so it is not an output at all. The exhibit scores that case against the
+  partials that would actually have verified: if they still reach t it recomputes β over just those
+  (Lagrange weights re-derived for that subset), and if they do not it says plainly that the cast
+  determined nothing publishable, rather than presenting a poisoned aggregate as "the β the
+  withholder knew".
 - **Too few parties** — below t the protocol refuses outright. Cheaters plus absentees reaching
   n − t + 1 can *halt* the beacon (liveness), but can never bias a published output for a fixed
   message (safety).

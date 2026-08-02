@@ -47,7 +47,7 @@ interface AppState {
    * honest rerun can actually show the byte-for-byte comparison the abort
    * verdict promises, even when no successful run preceded it.
    */
-  lastWithheld?: { message: string; beta: Uint8Array }
+  lastWithheld?: { message: string; beta: Uint8Array; label: string }
   steps: string[]
   ladderRungs: string[][]
   stepIndex: number
@@ -665,20 +665,99 @@ function runBreak(): void {
   }
 
   if (tr.status === 'aborted-withheld') {
-    state.lastWithheld = { message: tr.message, beta: tr.learnedBeta! }
+    const withholders = `Part${tr.withheld.length === 1 ? 'y' : 'ies'} ${tr.withheld.join(', ')}`
+
+    // Pure withhold: every partial that could be checked passed, so the round-1
+    // aggregate really is this message's output and the withholder knows it.
+    if (tr.learnedBeta) {
+      state.lastWithheld = {
+        message: tr.message,
+        beta: tr.learnedBeta,
+        label: 'β the withholder had already learned',
+      }
+      $('break-out').innerHTML = `${cheatSummary}${verdict(
+        'warn',
+        '⚠ Selective abort — output learned, publication censored',
+        `<p>${withholders} broadcast round 1, watched everyone else's partials arrive, computed the
+         eventual output — and then refused round 2, so the proof cannot be completed with this
+         participant set. Every partial in that aggregate that could be checked passed its DLEQ,
+         which is why the value below is an output and not merely a number.</p>
+         <div class="beta-box"><h3>The β the withholder already knew</h3>
+         <p class="beta-hex">${betaHex(tr.learnedBeta)}</p></div>
+         <p>This is the honest limit of "no bias": for a fixed key and message no <em>other</em> β can ever
+         be produced, but a coalition can still censor publication. A real beacon must therefore keep the
+         message fixed on retry and replace the withholder — never roll a fresh candidate output. Press
+         “Rerun with honest parties” and compare byte-for-byte.</p>`,
+      )}`
+      return
+    }
+
+    // MIXED cast: a partial in the aggregate the withholder saw fails its DLEQ.
+    // H(Γ) over that aggregate is not β — no participant set could ever have
+    // published it — so it is reported as what it is, and the page falls back
+    // to what the partials that DID verify determine.
+    const rows = tr.partials
+      .map((p) => {
+        const k = p.check.keyEquation ? chip('ok', '✔', 'key eq') : chip('bad', '✘', 'key eq')
+        const g = p.check.inputEquation ? chip('ok', '✔', 'input eq') : chip('bad', '✘', 'input eq')
+        return `<tr><th scope="row">Party ${p.index}</th><td>${k} ${g}</td>
+                <td>${p.check.ok ? chip('ok', '✔', 'verified') : chip('bad', '✘', 'BLAMED')}</td></tr>`
+      })
+      .concat(
+        tr.withheld.map(
+          (i) =>
+            `<tr><th scope="row">Party ${i}</th><td>${chip('warn', '—', 'no z_i sent')}</td>
+             <td>${chip('warn', '—', 'unverifiable')}</td></tr>`,
+        ),
+      )
+      .join('')
+
+    const verified = tr.verifiedPartials ?? []
+    const settled =
+      tr.verifiedSubsetBeta === undefined
+        ? `<p><strong>What this cast can determine: nothing publishable.</strong> Only
+           ${verified.length} partial${verified.length === 1 ? '' : 's'} verified but t = ${ceremony.t}
+           are needed, and a withheld partial carries no z_i to check. The withholder did not learn an
+           output — it learned an aggregate that verification would have thrown away.</p>`
+        : `<p><strong>What this cast can determine:</strong> the ${verified.length} partials that did
+           verify (part${verified.length === 1 ? 'y' : 'ies'} ${verified.join(', ')}) still reach
+           t = ${ceremony.t}, so recomputing Γ over just those — Lagrange weights re-derived for that
+           subset — gives a genuine output. That is the value an honest rerun has to reproduce, and it
+           is ${
+             betaHex(tr.verifiedSubsetBeta) === betaHex(tr.contestedBeta!)
+               ? 'identical to'
+               : 'different from'
+           } the contested aggregate above.</p>
+           <div class="beta-box"><h3>β from the partials that verified</h3>
+           <p class="beta-hex">${betaHex(tr.verifiedSubsetBeta)}</p></div>`
+
+    if (tr.verifiedSubsetBeta) {
+      state.lastWithheld = {
+        message: tr.message,
+        beta: tr.verifiedSubsetBeta,
+        label: 'β from the partials that verified',
+      }
+    } else {
+      state.lastWithheld = undefined
+    }
+
     $('break-out').innerHTML = `${cheatSummary}${verdict(
       'warn',
-      '⚠ Selective abort — output learned, publication censored',
-      `<p>Part${tr.withheld.length === 1 ? 'y' : 'ies'} ${tr.withheld.join(', ')} broadcast round 1,
-       watched everyone else's partials arrive, computed the eventual output — and then refused round 2,
-       so the proof cannot be completed with this participant set.</p>
-       <div class="beta-box"><h3>The β the withholder already knew</h3>
-       <p class="beta-hex">${betaHex(tr.learnedBeta!)}</p></div>
-       <p>This is the honest limit of "no bias": for a fixed key and message no <em>other</em> β can ever
-       be produced, but a coalition can still censor publication. A real beacon must therefore keep the
-       message fixed on retry and replace the withholder — never roll a fresh candidate output. Press
-       “Rerun with honest parties” and compare byte-for-byte.</p>`,
-    )}`
+      '⚠ Selective abort on a contested aggregate — no output was learned',
+      `<p>${withholders} refused round 2, but part${tr.blamed.length === 1 ? 'y' : 'ies'}
+       ${tr.blamed.join(', ')} also failed the DLEQ check on the partial${
+         tr.blamed.length === 1 ? '' : 's'
+       } already folded into the round-1 aggregate. So the value the withholder computed is
+       <em>not</em> this message's β: it is H(Γ) over an aggregate containing a partial that
+       verification rejects, and no participant set could ever have published it.</p>
+       <div class="table-scroll"><table class="compare-table"><tr><th scope="col">Party</th><th scope="col">DLEQ checks</th><th scope="col">Verdict</th></tr>${rows}</table></div>
+       <div class="beta-box beta-box-contested"><h3>Contested aggregate — H(Γ), not β</h3>
+       <p class="beta-hex">${betaHex(tr.contestedBeta!)}</p></div>
+       ${settled}
+       <p>Selective abort still cannot steer the output. It censors publication, and here it is
+       stacked with a corrupted partial that verification names — which is why the honest reading of a
+       mixed cast is "nobody learned an output", not "the withholder learned a different one".</p>`,
+    )}${partyCards(ceremony, undefined, tr.blamed)}`
     return
   }
 
@@ -725,9 +804,12 @@ function runBreak(): void {
 
 /**
  * What the rerun should reproduce byte-for-byte, for this exact message: an
- * earlier successful β if there is one, otherwise the β a withholder already
- * learned during a selective abort. Both are real computed values — the whole
- * point of the comparison is that no cheat could have moved either one.
+ * earlier successful β if there is one, otherwise the output the most recent
+ * selective abort actually settled — the β a withholder learned from an
+ * uncontested aggregate, or, in a mixed cast, the β determined by the partials
+ * that verified. Both are real computed values, and neither is ever the
+ * contested aggregate from a mixed cast: that value is not an output, so
+ * comparing a rerun against it would manufacture a mismatch out of nothing.
  */
 function rerunReference(message: string): { beta: string; label: string } | undefined {
   const { lastOk, lastWithheld } = state
@@ -735,7 +817,7 @@ function rerunReference(message: string): { beta: string; label: string } | unde
     return { beta: betaHex(lastOk.beta), label: 'Earlier successful run' }
   }
   if (lastWithheld && lastWithheld.message === message) {
-    return { beta: betaHex(lastWithheld.beta), label: 'β the withholder had already learned' }
+    return { beta: betaHex(lastWithheld.beta), label: lastWithheld.label }
   }
   return undefined
 }

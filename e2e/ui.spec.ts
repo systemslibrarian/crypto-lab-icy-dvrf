@@ -92,6 +92,69 @@ test('selective abort: withholder learns β, honest rerun publishes the identica
   expect(published).toBe(learned)
 })
 
+/**
+ * A MIXED cast (corrupted partial + withholder) must never present the round-1
+ * aggregate as "the β the withholder already knew": that aggregate contains a
+ * partial verification rejects, so it is not any publishable output. Both
+ * sub-cases are pinned — the one where enough verified partials remain to
+ * settle a real output, and the one where they do not.
+ */
+test('a mixed cast reports a contested aggregate, and settles on the verified subset', async ({
+  page,
+}) => {
+  await setupAndPreprocess(page)
+  // Widen the roster so the verified partials still reach t after the blame.
+  await page.locator('input[name="roster"][value="4"]').check()
+  await page.locator('input[name="roster"][value="5"]').check()
+  await page.locator('#cheat-1').selectOption('corrupt-gamma')
+  await page.locator('#cheat-2').selectOption('withhold-response')
+  await page.locator('#break-btn').click()
+
+  const out = page.locator('#break-out')
+  await expect(out.locator('.verdict-warn')).toContainText('contested aggregate')
+  // The discredited claim must be gone, and the value relabelled for what it is.
+  await expect(out).not.toContainText('The β the withholder already knew')
+  await expect(out.locator('.beta-box-contested h3')).toContainText('H(Γ), not β')
+  // The verified subset is named, and the withholder is marked unverifiable
+  // rather than silently folded in.
+  await expect(out).toContainText('parties 3, 4, 5')
+  await expect(out).toContainText('no z_i sent')
+
+  const settled = (
+    await out.locator('.beta-box:not(.beta-box-contested) .beta-hex').textContent()
+  )!.trim()
+  const contested = (await out.locator('.beta-box-contested .beta-hex').textContent())!.trim()
+  expect(settled).toMatch(/^[0-9a-f]{128}$/)
+  expect(settled).not.toBe(contested)
+
+  // The honest rerun reproduces the settled value byte-for-byte — the mixed
+  // cast no longer manufactures a "this should never happen" mismatch.
+  await page.locator('#cheat-1').selectOption('honest')
+  await page.locator('#cheat-2').selectOption('honest')
+  await page.locator('#honest-rerun-btn').click()
+  await expect(out.locator('.verdict-ok')).toContainText('Honest threshold delivers')
+  await expect(out.locator('.compare-table')).toContainText('identical')
+  await expect(out).not.toContainText('should never happen')
+})
+
+test('a mixed cast below threshold says plainly that nothing was determined', async ({ page }) => {
+  await setupAndPreprocess(page)
+  // The default roster is exactly t, so blaming one and withholding one leaves
+  // a single verified partial — not enough to settle anything.
+  await page.locator('#cheat-1').selectOption('corrupt-gamma')
+  await page.locator('#cheat-2').selectOption('withhold-response')
+  await page.locator('#break-btn').click()
+
+  const out = page.locator('#break-out')
+  await expect(out.locator('.verdict-warn')).toContainText('no output was learned')
+  await expect(out).toContainText('nothing publishable')
+  await expect(out).toContainText('Only 1 partial verified but t = 3')
+  await expect(out).not.toContainText('The β the withholder already knew')
+  // Exactly one β-shaped value on screen: the contested one, labelled as such.
+  await expect(out.locator('.beta-box')).toHaveCount(1)
+  await expect(out.locator('.beta-box-contested')).toHaveCount(1)
+})
+
 test('an exported envelope verifies in a fresh context; one flipped character fails, named', async ({
   page,
   context,

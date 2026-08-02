@@ -530,6 +530,17 @@ body {
   color: var(--accent-fg);
 }
 
+/* A value a mixed cast produced that is NOT an output — styled apart from the
+   accent boxes so it never reads as a published β. */
+.beta-box-contested {
+  border-color: var(--bad-border);
+  background: var(--bad-bg);
+}
+
+.beta-box-contested h3 {
+  color: var(--bad-fg);
+}
+
 .beta-hex {
   font-family: var(--mono);
   font-size: 0.82rem;
