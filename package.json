@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",
-    "@playwright/test": "^1.61.1",
+    "@playwright/test": "^1.62.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.5",
     "vitest": "^4.1.10"
