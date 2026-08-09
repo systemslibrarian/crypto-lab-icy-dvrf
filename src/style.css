@@ -48,9 +48,18 @@
   --text-h: #10222a;
   --text-dim: #4f646d;
   --code-bg: #e9f1f3;
-  --accent: #4fd0e0;
+  /* The light theme darkened --accent-fg for text and left --accent, the FILL,
+     at the dark theme's icy cyan. On a white panel #4fd0e0 measures 1.84:1 —
+     under the 3:1 SC 1.4.11 asks of a control boundary — and --accent is the
+     fill AND the border of every button on this page, the `accent-color` of
+     both sliders and every roster checkbox, the 4px marker on the current
+     protocol step, and the highlight on the current ladder rung. So the whole
+     set was invisible against the page in one theme. Matching --accent to
+     --accent-fg puts all of them at 6.62:1 on --panel, 6.24:1 on --bg and
+     5.78:1 on --code-bg; --accent-ink flips to white on top, at 6.62:1. */
+  --accent: #0b6675;
   --accent-fg: #0b6675;
-  --accent-ink: #062a30;
+  --accent-ink: #ffffff;
   --accent-bg: rgba(79, 208, 224, 0.14);
   --accent-border: rgba(11, 102, 117, 0.4);
   --ok-fg: #136540;
@@ -256,10 +265,16 @@ body {
   cursor: not-allowed;
 }
 
+/* Currently unused — no element on the page carries `.secondary`. Kept, but
+   pointed at --accent-fg rather than --accent-border: with a transparent fill
+   the border is the ONLY delineator, and --accent-border is an `rgba()` wash
+   that measures 2.93:1 in dark and 1.91:1 in light over the panel behind it.
+   --accent-fg is 9.33:1 and 6.62:1. A latent 1.4.11 failure waiting for the
+   first button that opts in. */
 #app button.secondary {
   background: transparent;
   color: var(--accent-fg);
-  border-color: var(--accent-border);
+  border-color: var(--accent-fg);
 }
 
 #app input[type='text'] {
@@ -498,15 +513,23 @@ body {
   font-size: 1rem;
 }
 
-.verdict-ok h3 {
+/* `#app` on all three, and on the two β-box headings below, because
+   `#app h1, #app h2, #app h3, #app h4 { color: var(--text-h) }` near the top of
+   this file is (1,0,1) and beats a one-class rule. Without the id these five
+   declarations were DEAD: every verdict heading — pass, fail and warn — painted
+   the same neutral --text-h, so the page's whole severity colour-coding never
+   reached the screen. The colours are unchanged; they simply now apply.
+   Measured on the wash each one sits on: 8.91 / 7.53 / 8.37 / 7.64:1 in dark and
+   6.20 / 6.28 / 6.20 / 6.07:1 in light. */
+#app .verdict-ok h3 {
   color: var(--ok-fg);
 }
 
-.verdict-bad h3 {
+#app .verdict-bad h3 {
   color: var(--bad-fg);
 }
 
-.verdict-warn h3 {
+#app .verdict-warn h3 {
   color: var(--warn-fg);
 }
 
@@ -527,6 +550,10 @@ body {
 
 .beta-box h3 {
   margin: 0 0 0.3rem;
+}
+
+/* See the note on the verdict headings above. */
+#app .beta-box h3 {
   color: var(--accent-fg);
 }
 
@@ -537,7 +564,7 @@ body {
   background: var(--bad-bg);
 }
 
-.beta-box-contested h3 {
+#app .beta-box-contested h3 {
   color: var(--bad-fg);
 }
 
