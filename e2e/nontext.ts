@@ -7,12 +7,10 @@ import type { Page } from '@playwright/test';
  * `axe` has no rule for either. The arithmetic contrast walk in `contrast.ts`
  * measures *text nodes*, so it cannot reach a control's boundary and cannot
  * reach a `::before`/`::after` glyph, because a pseudo-element is not an
- * element and owns no text node. Both classes were live here. The variant-less
- * `.btn` behind Scenario 0 measured 1.00:1 against the scenario card it sits on
- * — no fill of its own, no border, and the UA's ButtonFace happening to land on
- * the same colour as the panel — and every other button on the page drew its
- * boundary from a fill declared "constant across themes", which put the gold
- * primary button at 1.40:1 on the white light-theme exhibit.
+ * element and owns no text node. Between them they accounted for most of the
+ * hand-measured findings in this sweep — button boundaries at 1.09:1 against
+ * their own panel, and a duplicate-block marker at 1.00:1 that was the entire
+ * non-colour cue its exhibit existed to provide.
  *
  * TWO SEPARATE CHECKS LIVE HERE.
  *
@@ -29,15 +27,6 @@ import type { Page } from '@playwright/test';
  *        if you can see it against what is beyond it).
  *    An element passes if either clears 3:1. It fails only when neither does,
  *    which is the case where the control genuinely dissolves into its panel.
- *
- *    A TRANSLUCENT border is composited over the element's OWN FILL, not over
- *    the surround, because `background-clip` defaults to `border-box` and the
- *    background really is painted underneath the border. This lab depends on
- *    that: one `--btn-edge: rgba(0,0,0,.55)` token delineates six
- *    differently-coloured buttons precisely by taking each one's fill as its
- *    backdrop. Composited over the surround instead, the gold button's edge
- *    would read rgb(115,115,115) rather than the rgb(115,97,0) a screenshot of
- *    the page actually contains.
  *
  * 2. GENERATED CONTENT, 4.5:1 (3:1 for large). `getComputedStyle(el, '::before')`
  *    reports the pseudo's `content`, `color`, `background` and font, so the ink
@@ -106,6 +95,9 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       return rgba;
     };
 
+    // `over`, `fade`, `lum` and `ratio` come from the ported paint core below,
+    // which is the version `contrast.ts` has been exercised against all sweep.
+
     const styleOf = (el: Element, pseudo?: string): CSSStyleDeclaration => {
       const key = pseudo ?? '';
       const cached = (el as unknown as { __sc?: Map<string, CSSStyleDeclaration> }).__sc?.get(key);
@@ -156,6 +148,8 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       };
     };
 
+    const fade = (c: RGBA, o: number): RGBA => (o >= 1 ? c : { ...c, a: c.a * o });
+
     const luminance = (c: RGBA): number => {
       const f = (v: number): number => {
         const s = v / 255;
@@ -170,6 +164,10 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
     };
 
+    interface Point {
+      x: number;
+      y: number;
+    }
     interface Stop {
       color: RGBA;
       pos: number;
@@ -250,18 +248,16 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
     /**
      * Evaluate one background-image layer at a document point.
      *
-     * Judging a gradient at its worst *stop* assumes that stop covers the sample
-     * point wherever it sits, which is wrong for any gradient spanning a box
-     * taller than the thing being measured. So each gradient is *sampled* at the
-     * real location instead: linear by projecting onto the gradient line, radial
-     * by distance from the centre over the farthest-corner radius. A non-gradient
-     * layer (`url()`, `none`) is unmeasurable and paints nothing.
-     *
-     * This page paints no gradients today — every surface is a flat colour or a
-     * `color-mix()` — so this branch is currently inert. It is kept because it is
-     * the same paint core `contrast.ts` runs, and forking a second, weaker one
-     * for the first gradient anyone adds is how two oracles start disagreeing
-     * about what the page looks like.
+     * The previous gate judged every gradient at its worst *stop*, assuming that
+     * stop covered the text wherever the text sat. That is right for a gradient
+     * that spans its element, but this page's `:root` paints two low-alpha
+     * radial washes that fade to `transparent` by ~30% — decorative glows in the
+     * top corners. Judging the footer, a full page-height below, by the corner
+     * colour invented backdrops the footer text never sits on (accent links read
+     * 3.56:1 where they actually render ~4.9:1). So each gradient is *sampled* at
+     * the text's real location instead: linear by projecting onto the gradient
+     * line, radial by distance from the centre over the farthest-corner radius.
+     * A non-gradient layer (`url()`, `none`) is unmeasurable and paints nothing.
      */
     const sampleLayer = (layer: string, rect: DOMRect, p: Point): RGBA => {
       if (!/gradient/.test(layer)) return TRANSPARENT;
@@ -338,17 +334,61 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       return result;
     };
 
+    /** Do two border boxes share any painted area at all? */
+    const intersects = (a: DOMRect, b: DOMRect): boolean =>
+      Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) > 0 &&
+      Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)) > 0;
+
+    /** Does `a` sit entirely inside `b`? */
+    const contains = (outer: DOMRect, inner: DOMRect): boolean =>
+      inner.left >= outer.left - 0.5 &&
+      inner.right <= outer.right + 0.5 &&
+      inner.top >= outer.top - 0.5 &&
+      inner.bottom <= outer.bottom + 0.5;
+
+    /**
+     * Style and geometry are memoised per element for one pass.
+     *
+     * A signature expanded to its full 3,373 bytes is 6,746 hex characters in
+     * one element, and the drive scans after every one of ~30 steps; every text
+     * node on the page walks the same handful of ancestors each time. Without
+     * the caches the pass re-reads the same computed styles and rects thousands
+     * of times. Nothing mutates the DOM during the pass, so the cached values
+     * cannot go stale.
+     */
+    const styleCache = new Map<Element, CSSStyleDeclaration>();
+
+    // Declared by the spliced paint core; see mknontext.py.
+    void splitTopLevel;
+    void over;
+    void fade;
+    void luminance;
+    void ratio;
+    void clamp01;
+    void colorAt;
+    void parseStops;
+    void axisValue;
+    void VERT;
+    void HORZ;
+    void sampleLayer;
+    void paintAt;
+    void intersects;
+    void contains;
+    void styleCache;
+
     /**
      * An element's own painted background AT A POINT — gradients included.
      *
-     * Reading `background-color` alone is not what a page paints: a canvas built
-     * from gradients reports `rgba(0,0,0,0)` for both `html` and `body`, the walk
-     * finds nothing opaque, falls through to WHITE, and reports light-theme
-     * ratios for a near-black page. The tell is a number that comes out IDENTICAL
-     * in both themes — a ratio that cannot depend on the theme is not measuring
-     * the theme. That is the same class of mistake as the canvas-background bug
-     * in `contrast.ts`, so this borrows that file's gradient-aware sampler
-     * wholesale rather than approximating it a second time.
+     * The first version of this read `background-color` alone, and that is not
+     * what a page paints. `pq-rotation` reports `rgba(0,0,0,0)` for both `html`
+     * and `body` because its dark canvas is two radial gradients; the walk
+     * therefore found nothing opaque, fell through to WHITE, and reported a
+     * bright cyan disclosure triangle at 3.95:1 against a page that is actually
+     * near-black. The tell was that the number came out IDENTICAL in both
+     * themes — a ratio that cannot depend on the theme is not measuring the
+     * theme. This is the same class of mistake as the canvas-background bug in
+     * `contrast.ts`, so it borrows that file's gradient-aware sampler wholesale
+     * rather than approximating it a second time.
      */
     const ownPaint = (cs: CSSStyleDeclaration, rect: DOMRect, p: Point): RGBA =>
       paintAt(cs, rect, p);
@@ -406,6 +446,16 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
       '[role=checkbox]',
       '[role=radio]',
       '[role=slider]',
+      // A LINK STYLED AS A BUTTON is a UI component under 1.4.11 and was being
+      // missed entirely: the shared header's Menu and GitHub controls are
+      // `<a class="cl-btn">`, and with no `a` in this list nothing ever judged
+      // them. Restricted to link-shaped BUTTONS — prose links identify
+      // themselves by their text and are not 1.4.11 cases — and anything that
+      // slips through still has to pass the "is it trying to draw itself as a
+      // control?" test below.
+      'a[role=button]',
+      'a[class*=btn]',
+      'a[class*=button]',
     ].join(',');
 
     for (const el of Array.from(document.querySelectorAll(CONTROL))) {
@@ -456,8 +506,13 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
 
       if (hasBorder) {
         const bc = resolve(cs.borderTopColor) ?? TRANSPARENT;
-        // Over the element's own FILL — `background-clip: border-box` is the
-        // default, so the background really is painted under the border.
+        // Over the element's OWN FILL, not the surround: `background-clip`
+        // defaults to `border-box`, so the background really is painted
+        // underneath the border. It matters wherever one translucent edge token
+        // delineates several differently-coloured buttons by taking each one's
+        // fill as its backdrop — composited over the surround instead, a gold
+        // button's `rgba(0,0,0,.55)` edge reads rgb(115,115,115) rather than the
+        // rgb(115,97,0) a screenshot of the page actually contains.
         const border = over(over(bc, fill), WHITE);
         const borderRatio = ratio(border, surround);
         if (borderRatio > best) {
@@ -466,7 +521,7 @@ export async function auditNonText(page: Page, within = 'body *'): Promise<NonTe
         }
       }
       if (hasOutline) {
-        // An outline paints OUTSIDE the border box, so its backdrop is the
+        // An outline paints OUTSIDE the border box, so its backdrop IS the
         // surround — the opposite of the border above.
         const oc = resolve(cs.outlineColor) ?? TRANSPARENT;
         const outline = over(over(oc, surround), WHITE);
