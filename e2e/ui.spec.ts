@@ -201,3 +201,39 @@ test('no horizontal overflow in the longest completed states at 390px and 320px'
     expect(scrollWidth, `viewport ${width}px`).toBeLessThanOrEqual(clientWidth)
   }
 })
+
+/**
+ * The staleness chip echoes the two ceremony sliders back into markup.
+ * CodeQL js/xss-through-dom traced tInput.value and nInput.value through
+ * chip()'s label into #setup-stale's innerHTML, and they are escaped now.
+ *
+ * What makes that path unreachable today is the CONTROL, not the escape, so the
+ * control is what this test pins: assigning markup to a range input leaves a
+ * numeric value behind, because the HTML value sanitization algorithm replaces
+ * anything that is not a valid floating-point number. Measured, not assumed --
+ * `el.value = '<img …>'` leaves "4". If either slider ever becomes a text
+ * input, this test fails and the escaping becomes load-bearing rather than
+ * belt-and-braces.
+ */
+test('the staleness chip names the pending t-of-n, and the sliders cannot hold markup', async ({ page }) => {
+  await page.goto('.')
+  await page.locator('#setup-btn').click()
+  await expect(page.locator('#setup-out .groupkey')).toBeVisible()
+
+  await page.locator('#t-input').evaluate((el: HTMLInputElement) => {
+    el.value = '2'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await expect(page.locator('#setup-stale .chip')).toContainText('to apply 2-of-5')
+
+  const held = await page.locator('#t-input').evaluate((el: HTMLInputElement) => {
+    el.value = '<img src=x data-injected=yes>'
+    const after = el.value
+    el.value = '2'
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    return { type: el.type, after }
+  })
+  expect(held.type).toBe('range')
+  expect(held.after).toMatch(/^\d+(\.\d+)?$/)
+  await expect(page.locator('[data-injected]')).toHaveCount(0)
+})
