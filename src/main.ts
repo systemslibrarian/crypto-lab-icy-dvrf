@@ -138,7 +138,7 @@ function syncThresholdRange(): void {
   const p = state.ceremonyParams
   const stale = p !== undefined && (p.n !== Number(nInput.value) || p.t !== Number(tInput.value))
   $('setup-stale').innerHTML = stale
-    ? chip('warn', '⚠', `showing a ${p!.t}-of-${p!.n} ceremony — run the ceremony again to apply ${tInput.value}-of-${nInput.value}`)
+    ? chip('warn', '⚠', `showing a ${p!.t}-of-${p!.n} ceremony — run the ceremony again to apply ${escapeHtml(tInput.value)}-of-${escapeHtml(nInput.value)}`)
     : ''
 }
 
