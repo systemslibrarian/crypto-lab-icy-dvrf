@@ -13,7 +13,7 @@ import {
   verify,
 } from './dvrf/protocol.ts'
 import { EnvelopeError, PROOF_BYTES, serializeEnvelope, verifyEnvelope } from './dvrf/envelope.ts'
-import { escapeHtml, pointHex, scalarHex, short } from './ui/format.ts'
+import { chip, escapeHtml, pointHex, scalarHex, short, staleChipHtml } from './ui/format.ts'
 
 // ---------------------------------------------------------------------------
 // State
@@ -78,10 +78,6 @@ const wbInput = $<HTMLTextAreaElement>('wb-input')
 // ---------------------------------------------------------------------------
 // Small render helpers
 
-function chip(kind: 'ok' | 'bad' | 'warn', icon: string, label: string): string {
-  return `<span class="chip chip-${kind}"><span aria-hidden="true">${icon}</span> ${label}</span>`
-}
-
 function verdict(kind: 'ok' | 'bad' | 'warn', title: string, body: string): string {
   return `<div class="verdict verdict-${kind}"><h3>${title}</h3>${body}</div>`
 }
@@ -135,11 +131,7 @@ function syncThresholdRange(): void {
   if (Number(tInput.value) > n) tInput.value = String(n)
   $('n-value').textContent = nInput.value
   $('t-value').textContent = tInput.value
-  const p = state.ceremonyParams
-  const stale = p !== undefined && (p.n !== Number(nInput.value) || p.t !== Number(tInput.value))
-  $('setup-stale').innerHTML = stale
-    ? chip('warn', '⚠', `showing a ${p!.t}-of-${p!.n} ceremony — run the ceremony again to apply ${escapeHtml(tInput.value)}-of-${escapeHtml(nInput.value)}`)
-    : ''
+  $('setup-stale').innerHTML = staleChipHtml(tInput.value, nInput.value, state.ceremonyParams)
 }
 
 function runSetup(): void {
