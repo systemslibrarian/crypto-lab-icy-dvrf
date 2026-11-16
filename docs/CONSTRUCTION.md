@@ -115,7 +115,7 @@ excluding request/response transport:
 | --- | --- | --- | --- |
 | GLOW / DDH-style DVRF | 1 (partials + individual NIZKs, non-interactive) | t proofs to check, or pairing operations | literature-standard structure of these schemes |
 | Interactive CP-DVRF, no preprocessing | 3 (commit nonces; broadcast partials/derive challenge; respond) | constant | the shared-challenge structure of this instantiation with the commit round forced online |
-| This instantiation (Icy-style) | 2 (+ offline, message-independent preprocessing) | constant (128 bytes) | measured here; consistent with the Icy-DVRF abstract's "one additional off-chain round vs. DDH-DVRF/GLOW-DVRF" |
+| This instantiation (Icy-style) | 2 (+ offline, message-independent preprocessing) | constant (128 bytes) | measured here; consistent with the Icy-DVRF abstract, which says the approach "incurs an additional off-chain communication round" relative to DDH-DVRF and GLOW-DVRF |
 
 Labels: the middle column values for this instantiation are **measured** by the demo; the other
 rows are **derived** from the schemes' published structure, not benchmarked here.
