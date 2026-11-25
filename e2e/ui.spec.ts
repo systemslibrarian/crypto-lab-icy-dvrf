@@ -155,6 +155,39 @@ test('a mixed cast below threshold says plainly that nothing was determined', as
   await expect(out.locator('.beta-box-contested')).toHaveCount(1)
 })
 
+test('a full 3-of-5 run can be compared with a smaller valid committee', async ({ page }) => {
+  await setupAndPreprocess(page)
+  for (const box of await page.locator('input[name="roster"]').all()) await box.check()
+  await runFullWalk(page)
+  await page.locator('#subset-btn').click()
+  await expect(page.locator('#verify-out')).toContainText('Different parties, identical output')
+  const outputs = page.locator('#verify-out .compare-table td.mono')
+  await expect(outputs).toHaveCount(2)
+  expect(await outputs.nth(1).textContent()).toBe(await outputs.nth(0).textContent())
+  await expect(page.locator('#verify-out')).toContainText('1, 2, 3, 4, 5')
+  await expect(page.locator('#verify-out .compare-table th').nth(1)).toHaveText('β from parties 1, 2, 3')
+})
+
+test('editing or clearing an envelope retires the previous workbench verdict', async ({ page }) => {
+  await setupAndPreprocess(page)
+  await runFullWalk(page)
+  const envelope = await page.locator('#export-box').inputValue()
+  const input = page.locator('#wb-input')
+  const verify = page.locator('#wb-verify-btn')
+  const out = page.locator('#wb-out')
+  await input.fill(envelope)
+  await verify.click()
+  await expect(out).toContainText('Envelope verifies')
+  await input.fill(envelope + ' ')
+  await expect(out).toHaveText('Ready to verify the edited envelope.')
+  await verify.click()
+  await expect(out).toContainText('Envelope verifies')
+  await input.fill('')
+  await expect(out).toHaveText('Paste a proof envelope to verify.')
+  await verify.click()
+  await expect(out).toContainText('Nothing to verify')
+})
+
 test('an exported envelope verifies in a fresh context; one flipped character fails, named', async ({
   page,
   context,

@@ -507,11 +507,11 @@ function runSubsetCompare(): void {
   if (!ceremony || !lastOk?.beta || !queued) return
   const prev = new Set(lastOk.responders)
   const others = ceremony.parties.map((p) => p.index).filter((i) => !prev.has(i))
-  if (others.length === 0) {
+  if (ceremony.t === ceremony.parties.length) {
     $('verify-out').innerHTML = verdict(
       'warn',
       '⚠ Only one possible committee',
-      `<p>Every party already participated (t = n, or the full roster ran). Re-run the key ceremony with
+      `<p>This ceremony requires all n parties because t = n. Re-run the key ceremony with
        t &lt; n to compare two genuinely different committees.</p>`,
     )
     return
@@ -877,6 +877,11 @@ verifyBtn.addEventListener('click', runVerify)
 subsetBtn.addEventListener('click', runSubsetCompare)
 breakBtn.addEventListener('click', runBreak)
 honestRerunBtn.addEventListener('click', runHonestRerun)
+wbInput.addEventListener('input', () => {
+  $('wb-out').textContent = wbInput.value.trim()
+    ? 'Ready to verify the edited envelope.'
+    : 'Paste a proof envelope to verify.'
+})
 wbVerifyBtn.addEventListener('click', runWorkbench)
 
 honestRerunBtn.dataset.armed = 'no'

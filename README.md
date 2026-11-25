@@ -39,9 +39,9 @@ constant-time.
 3. **Two online rounds** — step the real evaluation: hash-to-curve, round 1 (partials Γᵢ = xᵢ·P plus
    input-base nonces), one shared challenge with Lagrange weights, round 2 (responses zᵢ), per-party
    DLEQ checks, aggregation to β = H(Γ). Upstream controls lock while a walk is on screen, so nothing
-   visible can contradict the transcript. A **round ladder** alongside compares pairing-based DVRFs
-   (1 round, linear-size work), interactive Chaum–Pedersen DVRFs (3 rounds), and the preprocessed
-   2-round path — the demo's central "aha".
+   visible can contradict the transcript. A **round ladder** alongside compares two one-round designs (DDH-DVRF checks the contributors’ proofs, while
+   GLOW-DVRF verifies a compact result using pairings), interactive Chaum–Pedersen DVRFs (3 rounds),
+   and the preprocessed 2-round path — the demo's central "aha".
 4. **Public verification** — check the constant-size proof (Γ, R_B, R_P, z) with nothing but the group
    key: two DLEQ equations reported independently, plus β = H(Γ). A compute-both-sides table compares
    the threshold β byte-for-byte against the dealer's direct sk·P evaluation; a subset swap shows two
@@ -116,7 +116,7 @@ properties this demo makes visible; the gas and curve figures are the paper's, n
 ```bash
 npm ci
 npm run dev        # dev server
-npm test           # 89 Vitest tests incl. 52 RFC 9496 KATs + frozen transcript vectors
+npm test           # Vitest suite, including RFC 9496 and frozen transcript vectors
 npm run build      # typecheck + production build
 npm run test:a11y  # Playwright: axe WCAG 2.1 A/AA gate (both themes) + UI regression suite (build first)
 ```
@@ -132,7 +132,7 @@ Requires Node ≥ 22 (declared in `engines`).
 
 ## Build & Verify
 
-- **89 unit tests** (Vitest, colocated in `src/`): Shamir round-trips and Lagrange identities, DLEQ
+- **Unit tests** (Vitest, colocated in `src/`): Shamir round-trips and Lagrange identities, DLEQ
   accept/reject per equation, full-protocol tests (threshold output ≡ direct evaluation, subset
   independence, tamper rejection for every proof component, cheater blame, selective abort with
   learned-output equality, nonce single-use, zero-scalar rejection, below-threshold refusal, 2-of-2

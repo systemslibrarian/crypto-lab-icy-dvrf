@@ -113,7 +113,8 @@ excluding request/response transport:
 
 | Design | Online rounds | Proof/verification size | Basis |
 | --- | --- | --- | --- |
-| GLOW / DDH-style DVRF | 1 (partials + individual NIZKs, non-interactive) | t proofs to check, or pairing operations | literature-standard structure of these schemes |
+| DDH-DVRF | 1 (partials and individual proofs) | final verification checks the t contributors’ proofs | [Choi, §2.13](https://cs.nyu.edu/media/publications/Kevin_Choi_PhD.pdf) |
+| GLOW-DVRF | 1 (partials and individual proofs) | compact final proof verified with a pairing equation | [Choi, §2.14](https://cs.nyu.edu/media/publications/Kevin_Choi_PhD.pdf) |
 | Interactive CP-DVRF, no preprocessing | 3 (commit nonces; broadcast partials/derive challenge; respond) | constant | the shared-challenge structure of this instantiation with the commit round forced online |
 | This instantiation (Icy-style) | 2 (+ offline, message-independent preprocessing) | constant (128 bytes) | measured here; consistent with the Icy-DVRF abstract, which says the approach "incurs an additional off-chain communication round" relative to DDH-DVRF and GLOW-DVRF |
 
