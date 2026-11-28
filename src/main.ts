@@ -465,8 +465,7 @@ function renderExport(tr: Transcript): void {
   if (!ceremony || !tr.beta || !tr.proof) return
   const envelope = serializeEnvelope(ceremony.groupPk, tr.message, tr.beta, tr.proof)
   $('export-out').innerHTML = `
-    <p>Everything a stranger needs — construction ID, group key, message, β, and the ${PROOF_BYTES}-byte
-    proof. Copy it into the workbench below, another tab, or another machine:</p>
+    <p>Binary proof payload: <strong>${PROOF_BYTES} bytes</strong>. Exported JSON: <strong id="export-byte-count">${utf8ToBytes(envelope).length} UTF-8 bytes</strong>. The JSON includes the construction ID, group key, message, β and encoded proof. Copy the exact text below to the workbench or another device.</p>
     <textarea class="envelope-box" id="export-box" readonly rows="9"
       aria-label="Exported proof envelope (canonical JSON)">${escapeHtml(envelope)}</textarea>`
 }

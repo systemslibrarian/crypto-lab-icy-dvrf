@@ -39,7 +39,7 @@ file alone, without inferring anything from source code.
 | Hash-to-group | RFC 9380 `hash_to_ristretto255` with DST `crypto-lab-icy-dvrf:v1:h2g` (`hashToPoint`) |
 | Hash-to-scalar | `expand_message_xmd(SHA-512)` → 64 bytes → **little-endian** integer reduced mod L (noble's ristretto255 `hashToScalar`), with DST `crypto-lab-icy-dvrf:v1:<tag>` |
 | Party indices in hashes | Decimal ASCII of the 1-based index (e.g. `"3"`), framed like any other part |
-| Randomness | 48 uniform bytes → big-endian integer mod L, zero rejected and resampled (`randomScalar`) |
+| Randomness | 48 uniform bytes → big-endian integer. Reject draws at or above the largest multiple of L below 2³⁸⁴, reduce accepted draws modulo L, and resample zero (`randomScalar`) |
 
 ## Phase map (paper concept → this repository)
 

@@ -195,6 +195,10 @@ test('an exported envelope verifies in a fresh context; one flipped character fa
   await setupAndPreprocess(page)
   await runFullWalk(page)
   const envelope = await page.locator('#export-box').inputValue()
+  const bytes = Buffer.byteLength(envelope, 'utf8')
+  expect(bytes).toBeGreaterThan(128)
+  await expect(page.locator('#export-byte-count')).toHaveText(`${bytes} UTF-8 bytes`)
+
 
   // Fresh page: no shared JS state with the producer.
   const other = await context.newPage()

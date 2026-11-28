@@ -38,15 +38,16 @@ export function frame(...parts: Uint8Array[]): Uint8Array {
   return concatBytes(...out)
 }
 
-/**
- * Uniform nonzero scalar from 48 uniform bytes (384 bits >> 253-bit order:
- * negligible bias). Zero is rejected and resampled — a zero dealer key would
- * make every output predictable, and a zero nonce leaks structure, so the
- * impossible-in-practice case is excluded by construction rather than by luck.
- */
+// Keep only complete groups of ORDER consecutive draws so every residue is equally likely.
+const SCALAR_DRAW_RANGE = 1n << 384n
+const SCALAR_DRAW_LIMIT = SCALAR_DRAW_RANGE - SCALAR_DRAW_RANGE % ORDER
+
+/** Uniform nonzero scalar sampled from independent 48-byte draws. */
 export function randomScalar(rng: Rng = defaultRng): bigint {
   for (;;) {
-    const s = Fn.create(BigInt('0x' + bytesToHex(rng(48))))
+    const draw = BigInt('0x' + bytesToHex(rng(48)))
+    if (draw >= SCALAR_DRAW_LIMIT) continue
+    const s = Fn.create(draw)
     if (s !== 0n) return s
   }
 }

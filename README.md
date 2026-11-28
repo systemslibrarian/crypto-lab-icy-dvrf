@@ -6,16 +6,15 @@ A browser-based educational demo of a **t-of-n distributed verifiable random fun
 inspired by **Icy-DVRF** (Ağırtaş, Özer, Saygı, Yayla, [eprint 2026/969](https://eprint.iacr.org/2026/969)):
 partial VRF evaluations proven with **Chaum–Pedersen DLEQ proofs** under one shared Fiat–Shamir
 challenge, with **FROST-style preprocessed nonce commitments** so the online phase is two broadcast
-rounds and the aggregated proof is **constant-size** — 128 bytes whether 3 parties contributed or 300.
+rounds and the aggregated proof is **constant-size** — 128 bytes in this suite’s binary encoding for every supported committee size (2–7). The export reports the UTF-8 length of the complete JSON envelope separately.
 This is the demo's *own instantiation* over ristretto255, not a conformant implementation of the
 paper; equivalence has not been established, and every hashed byte, encoding, and deliberate
 deviation is documented in [docs/CONSTRUCTION.md](docs/CONSTRUCTION.md) and pinned by frozen
 transcript vectors in CI.
 
-The security story it teaches, as four **separate** properties: *unpredictability* (before the
-evaluation, nobody knows β), *fixed-input uniqueness* (for one group key and one message, no other β
+The security story it teaches, as four **separate** properties: *unpredictability* (an intended threshold property; the teaching dealer retains the secret and can compute β before evaluation), *fixed-input uniqueness* (for one group key and one message, no other β
 can ever verify — so no t−1 coalition can steer the value), *public verifiability* (anyone checks
-two DLEQ equations against the group key alone), and *liveness* — the one property cheaters can
+two DLEQ equations and the output hash using the group key, message, output and proof), and *liveness* — the one property cheaters can
 attack: a coalition can learn β and then censor its publication (selective abort), which is why real
 beacons must keep the message fixed on retry.
 

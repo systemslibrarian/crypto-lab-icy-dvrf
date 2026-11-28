@@ -180,10 +180,8 @@
           <h2 id="intro-h">What is this?</h2>
           <p>
             A <strong>verifiable random function (VRF)</strong> is a dice roll with a receipt: a secret key
-            turns a message into a random-looking output, plus a proof that anyone can check with only the
-            public key. A <strong>distributed</strong> VRF splits that secret key across
-            <em>n</em> parties so that any <em>t</em> of them can roll the dice together — and no smaller
-            group can roll, predict, or bias the outcome. This page runs the real elliptic-curve math for
+            turns a message into a random-looking output, plus a proof that anyone can check given the public key, the message and the claimed output. A <strong>distributed</strong> VRF splits that secret key across
+            <em>n</em> parties so that any <em>t</em> of them can roll the dice together — while fewer shares cannot interpolate the group secret. The dealer in this browser keeps the full secret for comparison. This page runs the real elliptic-curve math for
             every step, in your browser.
           </p>
           <details>
@@ -222,8 +220,7 @@
             verification share <code>PK<sub>i</sub></code>.
           </p>
           <p class="scope-note">
-            <span aria-hidden="true">⚠</span> Demo simplification: a trusted dealer briefly holds the whole
-            secret. Real deployments run a <em>distributed key generation</em> ceremony so no one ever does —
+            <span aria-hidden="true">⚠</span> Demo simplification: the browser retains the dealer’s full secret until the ceremony is replaced or the page resets. The dealer can independently compute the output for the comparison in Exhibit 4. Real deployments run a <em>distributed key generation</em> ceremony so no one ever does —
             DKG internals are out of scope here (see the VSS demo linked in the footer).
           </p>
           <div class="controls">
@@ -319,9 +316,9 @@
           <h2 id="verify-h"><span class="exhibit-no">Exhibit 4</span> Anyone can check it — and the proof never grows</h2>
           <p>
             The aggregated proof is four values — <code>(Γ, R<sub>B</sub>, R<sub>P</sub>, z)</code>,
-            128 bytes serialized — whether 3 parties contributed or 300 (the growing part, the round-1
-            broadcasts, deliberately never enters the final proof). Verification needs only the group
-            public key: two Chaum–Pedersen equations, checked independently, plus
+            128 bytes in this lab’s binary proof encoding for every supported committee of 2–7. The
+            exported JSON also carries the group public key, the message and the output. A verifier
+            uses those public inputs and the proof to check two Chaum–Pedersen equations and
             <code>β = H(Γ)</code>. The demo also compares the threshold result byte-for-byte against the
             dealer's direct evaluation <code>sk·P</code> (possible here only because the demo dealer
             kept <code>sk</code> for teaching).
@@ -357,7 +354,7 @@
           <p>
             Make a party misbehave, run the evaluation again, and watch the real verifier react. Four
             different properties get probed here, and they are not the same thing:
-            <strong>unpredictability</strong> (before round 1, nobody knows β),
+            <strong>unpredictability</strong> (the intended model protects β from fewer than t shareholders before evaluation. The teaching dealer can compute β directly),
             <strong>fixed-input uniqueness</strong> (for this key and message, no other β can ever
             verify), <strong>public verifiability</strong> (Exhibit 4), and
             <strong>liveness</strong> — the one cheaters <em>can</em> attack. A corrupted partial fails

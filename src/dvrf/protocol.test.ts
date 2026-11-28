@@ -34,7 +34,7 @@ describe('Icy-style DVRF — full protocol', () => {
     expect(out.proof!.gamma.equals(direct.gamma)).toBe(true)
   })
 
-  it('different participant subsets produce the identical output (uniqueness / no bias)', () => {
+  it('different participant subsets agree for the same group key and message', () => {
     const a = runEvaluation(ceremony, freshNonces(ceremony, 'n2a'), MESSAGE, [1, 2, 3])
     const b = runEvaluation(ceremony, freshNonces(ceremony, 'n2b'), MESSAGE, [2, 4, 5])
     const c = runEvaluation(ceremony, freshNonces(ceremony, 'n2c'), MESSAGE, [1, 3, 4, 5])
